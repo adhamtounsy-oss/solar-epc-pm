@@ -298,7 +298,7 @@ export const INIT_LEADS = [
     contactRole:'Farm Operations Director / VP Agriculture',
     phone:'+20 2 35714124',
     whatsapp:'',
-    email:'',
+    email:'haitham.shaarawy@cpg.com.eg',
     website:'https://cpg.com.eg',
     sourceType:'Website',
     monthlyBill:'60000',
@@ -515,4 +515,4 @@ export const INIT_RESEARCH = [
   },
 ];
 
-export const CSV_TEMPLATE_HEADERS = ['Lead ID','Organization Name','Segment','Governorate','Contact Person','Role','Phone','WhatsApp','Email','Website','Source Type','Monthly Bill EGP','System Size kW','Pain Point','Temperature','Pipeline Stage','Next Action','Last Contacted','Next Follow-Up','Touches','Probability %','Deal Value EGP','Notes'];
+export const CSV_TEMPLATE_HEADERS = ['Lead ID','Organization Name','Segment','Governorate','Contact Person','Role','Phone','WhatsApp','Email','Website','Source Type','Monthly Bill EGP','System Size kW','Pain Point','Temperature','Pipeline Stage','Next Action','Last Contacted','Next Follow-Up','Touches','Probability %','Deal Value EGP','Score','Tags','Notes'];

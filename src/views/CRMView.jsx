@@ -86,7 +86,7 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
       <div style={{ ...SL, marginBottom:4 }}>{label}</div>
       {opts ? (
         <select style={INP} value={f[k]} onChange={e=>set(k,e.target.value)}>
-          {opts.map(o=><option key={o}>{o}</option>)}
+          {opts.map(o=>typeof o==='object'?<option key={o.value} value={o.value}>{o.label}</option>:<option key={o}>{o}</option>)}
         </select>
       ) : rows ? (
         <textarea rows={rows} style={{ ...INP, resize:'vertical' }} value={f[k]||''} onChange={e=>set(k,e.target.value)} />
@@ -157,7 +157,7 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
           <Field label="Lead Temperature" k="temperature" opts={TEMPERATURES} />
 
           <SectionHead title="Pipeline" />
-          <Field label="Pipeline Stage" k="stage" opts={PIPELINE_STAGES.map(s=>s.id)} />
+          <Field label="Pipeline Stage" k="stage" opts={PIPELINE_STAGES.map(s=>({value:s.id,label:s.label}))} />
           <Field label="Probability %" k="probability" type="number" min="0" />
           <Field label="Estimated Deal Value EGP" k="dealValue" type="number" min="0" />
           <Field label="Next Action" k="nextAction" full />
