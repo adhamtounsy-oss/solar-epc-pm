@@ -6,7 +6,7 @@ import {
 } from '../data/crmData';
 
 // ── Storage ────────────────────────────────────────────────────────────────────
-const LS = { leads:'crm_leads_v2', tenders:'crm_tenders_v1', research:'crm_research_v1' };
+const LS = { leads:'crm_leads_v3', tenders:'crm_tenders_v2', research:'crm_research_v2' };
 const loadLS  = (k, fallback) => { try { const s = localStorage.getItem(k); if (s) return JSON.parse(s); } catch {} return fallback; };
 const saveLS  = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
