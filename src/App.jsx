@@ -3,24 +3,30 @@ import { STORAGE_KEY } from './constants';
 import { INIT_TASKS } from './data/tasks';
 import { INIT_RISKS } from './data/risks';
 import { INIT_KPIS  } from './data/kpis';
-import { KPIDash        } from './views/KPIDash';
-import { KanbanView     } from './views/KanbanView';
-import { TaskTableView  } from './views/TaskTableView';
-import { ScheduleView   } from './views/ScheduleView';
-import { WBSView        } from './views/WBSView';
-import { ComplianceView } from './views/ComplianceView';
-import { RiskView       } from './views/RiskView';
-import { CharterView    } from './views/CharterView';
+import { KPIDash          } from './views/KPIDash';
+import { KanbanView       } from './views/KanbanView';
+import { TaskTableView    } from './views/TaskTableView';
+import { ScheduleView     } from './views/ScheduleView';
+import { WBSView          } from './views/WBSView';
+import { ComplianceView   } from './views/ComplianceView';
+import { RiskView         } from './views/RiskView';
+import { CharterView      } from './views/CharterView';
+import { GovernanceView   } from './views/GovernanceView';
+import { QualityGatesView } from './views/QualityGatesView';
+import { OrgQualityView   } from './views/OrgQualityView';
 
 const TABS = [
-  { id: 'dashboard',  label: 'Dashboard'    },
-  { id: 'kanban',     label: 'Kanban'       },
-  { id: 'table',      label: 'Task Table'   },
-  { id: 'schedule',   label: 'Schedule'     },
-  { id: 'wbs',        label: 'WBS'          },
-  { id: 'compliance', label: 'Compliance'   },
-  { id: 'risks',      label: 'Risk Register'},
-  { id: 'charter',    label: 'PMBOK Charter'},
+  { id: 'dashboard',    label: 'Dashboard'    },
+  { id: 'kanban',       label: 'Kanban'       },
+  { id: 'table',        label: 'Task Table'   },
+  { id: 'schedule',     label: 'Schedule'     },
+  { id: 'wbs',          label: 'WBS'          },
+  { id: 'compliance',  label: 'Compliance'    },
+  { id: 'governance',  label: 'Stage Gates'   },
+  { id: 'quality',     label: 'Quality Gates' },
+  { id: 'orgquality',  label: 'Org Quality'   },
+  { id: 'risks',       label: 'Risk Register' },
+  { id: 'charter',     label: 'PMBOK Charter' },
 ];
 
 const load = () => {
@@ -102,14 +108,17 @@ export default function App() {
 
       {/* Content */}
       <div style={{ padding: '16px 20px', minHeight: 'calc(100vh - 100px)' }}>
-        {tab === 'dashboard'  && <KPIDash        kpis={kpis}  tasks={tasks}  setKpis={setKpis} />}
-        {tab === 'kanban'     && <KanbanView      tasks={tasks} onUpdate={updateTask} />}
-        {tab === 'table'      && <TaskTableView   tasks={tasks} onUpdate={updateTask} />}
-        {tab === 'schedule'   && <ScheduleView    tasks={tasks} />}
-        {tab === 'wbs'        && <WBSView         tasks={tasks} onUpdate={updateTask} />}
-        {tab === 'compliance' && <ComplianceView  tasks={tasks} onUpdate={updateTask} />}
-        {tab === 'risks'      && <RiskView        risks={risks} setRisks={setRisks} />}
-        {tab === 'charter'    && <CharterView />}
+        {tab === 'dashboard'   && <KPIDash          kpis={kpis}  tasks={tasks}  setKpis={setKpis} />}
+        {tab === 'kanban'      && <KanbanView        tasks={tasks} onUpdate={updateTask} />}
+        {tab === 'table'       && <TaskTableView     tasks={tasks} onUpdate={updateTask} />}
+        {tab === 'schedule'    && <ScheduleView      tasks={tasks} />}
+        {tab === 'wbs'         && <WBSView           tasks={tasks} onUpdate={updateTask} />}
+        {tab === 'compliance'  && <ComplianceView    tasks={tasks} onUpdate={updateTask} />}
+        {tab === 'governance'  && <GovernanceView />}
+        {tab === 'quality'     && <QualityGatesView />}
+        {tab === 'orgquality'  && <OrgQualityView />}
+        {tab === 'risks'       && <RiskView          risks={risks} setRisks={setRisks} />}
+        {tab === 'charter'     && <CharterView />}
       </div>
     </div>
   );
