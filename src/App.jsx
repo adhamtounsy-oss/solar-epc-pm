@@ -3,6 +3,7 @@ import { CommandCenter }   from './views/CommandCenter';
 import { TaskSystem }      from './views/TaskSystem';
 import { GovernanceView }  from './views/GovernanceView';
 import { RiskView }        from './views/RiskView';
+import { CRMView }         from './views/CRMView';
 import { INIT_RISKS }      from './data/risks';
 
 const TABS = [
@@ -10,6 +11,7 @@ const TABS = [
   { id: 'tasks',      label: '✓ Tasks' },
   { id: 'gates',      label: '🚪 Stage Gates' },
   { id: 'risks',      label: '⚠ Risks' },
+  { id: 'crm',        label: '◎ CRM / Leads' },
 ];
 
 const LS_RISKS = 'solar_risks_v1';
@@ -53,6 +55,7 @@ export default function App() {
         {tab === 'tasks'   && <TaskSystem />}
         {tab === 'gates'   && <GovernanceView />}
         {tab === 'risks'   && <RiskView risks={risks} setRisks={handleRisks} />}
+        {tab === 'crm'     && <CRMView />}
       </div>
     </div>
   );
