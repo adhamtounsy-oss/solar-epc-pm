@@ -466,7 +466,7 @@ const buildDossierHTML = (lead) => {
   win.document.close(); win.print();
 };
 
-const DossierModal = ({ lead, onClose, onEdit }) => {
+export const DossierModal = ({ lead, onClose, onEdit }) => {
   const currentStageIdx = PIPELINE_STAGES.findIndex(s => s.id === lead.stage);
   const reachedStages   = STAGE_DOSSIER_CONFIG.filter(cfg => {
     const idx = PIPELINE_STAGES.findIndex(s => s.id === cfg.stageId);

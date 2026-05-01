@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { DossierModal } from './CRMView';
 
 const PROJECTS_KEY = 'projects_v1';
 const LEADS_KEY    = 'crm_leads_v3';
@@ -529,6 +530,8 @@ function DossierDataPanel({ title, icon, fields, data, defaultOpen = false }) {
 // ── Linked lead panel ──────────────────────────────────────────────────────────
 
 function LinkedLeadPanel({ lead }) {
+  const [showDossier, setShowDossier] = useState(false);
+
   const stageLabel  = STAGE_LABELS[lead.stage] || lead.stage;
   const tempColor   = { Hot: '#C0392B', Warm: '#D4770A', Cold: '#555' }[lead.temperature] || '#555';
   const isOverdue   = lead.nextFollowUp && lead.nextFollowUp < new Date().toISOString().split('T')[0];
@@ -545,6 +548,10 @@ function LinkedLeadPanel({ lead }) {
 
   return (
     <div>
+      {showDossier && (
+        <DossierModal lead={lead} onClose={() => setShowDossier(false)} onEdit={() => setShowDossier(false)} />
+      )}
+
       {/* Header strip */}
       <div style={{ background: '#f5f7fa', borderRadius: 6, padding: '10px 14px', marginBottom: 14, display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ flex: 1 }}>
@@ -563,6 +570,12 @@ function LinkedLeadPanel({ lead }) {
           <span style={{ fontSize: 9, fontWeight: 700, color: T, background: '#e8f8f9', borderRadius: 8, padding: '2px 9px' }}>
             {stageLabel}
           </span>
+          <button
+            onClick={() => setShowDossier(true)}
+            style={{ padding: '3px 10px', background: T, color: '#fff', border: 'none', borderRadius: 6,
+              fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '.2px' }}>
+            📋 Full Dossier
+          </button>
         </div>
       </div>
 
