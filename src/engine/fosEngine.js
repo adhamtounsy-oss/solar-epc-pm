@@ -832,6 +832,8 @@ export const computeFullState = (fosState, leads) => {
     day, crm, workload, resource, cashProjection,
     compliance, mode, companyState,
     breakNext, primaryDecision, todayActions, doNotList, hiring,
+    // trelloEngine reads these to generate tasks
+    _leads: leads,
   };
 };
 

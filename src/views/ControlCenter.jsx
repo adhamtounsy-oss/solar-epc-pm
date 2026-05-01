@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   computeFullState, INIT_FOS_STATE, STRATEGY,
   fmtEgpShort, todayStr,
 } from '../engine/fosEngine';
+import { TrelloPanel } from './TrelloPanel';
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 const LS_FOS   = 'fos_state_v3';
@@ -522,17 +523,91 @@ const ResourceBar = ({ workload, resource }) => {
   );
 };
 
+// ── Decisions Required Panel ───────────────────────────────────────────────────
+const DecisionsRequired = ({ hiring, compliance, mode }) => {
+  const items = [];
+
+  // Hiring decisions that need action
+  for (const h of hiring) {
+    if (h.hire) {
+      items.push({
+        id:       `hire-${h.role}`,
+        category: 'HIRING',
+        urgency:  h.urgency,
+        title:    `${h.status}: ${h.role}`,
+        why:      h.reason,
+        action:   h.condition || 'Post job ad + set 48h shortlist deadline.',
+      });
+    }
+  }
+
+  // Compliance blockers
+  for (const item of compliance.items) {
+    if (item.status === 'critical' && !item.status !== 'done') {
+      items.push({
+        id:       `comp-${item.id}`,
+        category: 'COMPLIANCE',
+        urgency:  'critical',
+        title:    item.label,
+        why:      item.blocking ? `Blocks: ${item.blockingWhat}` : item.detail,
+        action:   item.detail,
+      });
+    }
+  }
+
+  // Strategy decision if in recovery
+  if (mode === 'recovery') {
+    items.push({
+      id:       'strat-review',
+      category: 'STRATEGY',
+      urgency:  'high',
+      title:    'Review sales strategy — recovery mode active',
+      why:      'System is in recovery mode. Non-revenue tasks are deprioritized.',
+      action:   'Audit pipeline: which leads can close within 30 days? Remove everything else from focus.',
+    });
+  }
+
+  if (items.length === 0) return null;
+
+  const urgColor = { critical:C.red, high:C.amber, medium:C.teal, low:'#aaa' };
+  const urgBg    = { critical:'#fff5f5', high:'#fff3cd', medium:'#e8f8f9', low:'#f5f5f5' };
+  const catColor = { HIRING:C.red, COMPLIANCE:C.amber, STRATEGY:C.teal, PROCUREMENT:C.navy };
+
+  return (
+    <Card accent={C.red}>
+      <SHead label="Decisions Required" color={C.red} />
+      <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+        {items.map((item, i) => (
+          <div key={item.id} style={{ padding:'10px 12px', borderRadius:6,
+            background: urgBg[item.urgency] || '#f5f5f5',
+            border:`1px solid ${urgColor[item.urgency]}33` }}>
+            <div style={{ display:'flex', gap:6, marginBottom:6, flexWrap:'wrap' }}>
+              <Tag label={item.category} color={catColor[item.category] || C.navy} bg='rgba(0,0,0,.06)' />
+              <Tag label={item.urgency.toUpperCase()} color={urgColor[item.urgency]} bg='rgba(0,0,0,.04)' />
+            </div>
+            <div style={{ fontSize:12, fontWeight:800, color:C.navy, marginBottom:4 }}>{item.title}</div>
+            <div style={{ fontSize:11, color:'#666', marginBottom:4, lineHeight:1.4 }}>
+              <b>Why:</b> {item.why}
+            </div>
+            <div style={{ fontSize:11, color:urgColor[item.urgency], fontWeight:600 }}>→ {item.action}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
+
 // ── Main ControlCenter ─────────────────────────────────────────────────────────
 export const ControlCenter = () => {
   const [fosState, setFosState] = useState(() => {
     const saved = loadFOS();
     return saved ? { ...INIT_FOS_STATE, ...saved } : INIT_FOS_STATE;
   });
-  const [leads, setLeads]       = useState(() => loadLeads());
+  const [leads, setLeads]           = useState(() => loadLeads());
   const [showInputs, setShowInputs] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
 
-  // Re-read CRM leads every time ControlCenter is rendered (CRM may have changed)
+  // Re-read CRM leads every 5s (CRM tab may have changed data)
   useEffect(() => {
     const interval = setInterval(() => {
       const fresh = loadLeads();
@@ -548,12 +623,26 @@ export const ControlCenter = () => {
     saveFOS(merged);
   };
 
+  // Trello feedback: when a task completes, advance the CRM lead stage
+  const handleCRMUpdate = useCallback((leadId, nextStage) => {
+    const LS_LEADS = 'crm_leads_v3';
+    try {
+      const raw = localStorage.getItem(LS_LEADS);
+      if (!raw) return;
+      const current = JSON.parse(raw);
+      const updated = current.map(l => l.id === leadId ? { ...l, stage: nextStage } : l);
+      localStorage.setItem(LS_LEADS, JSON.stringify(updated));
+      setLeads(updated);
+    } catch {}
+  }, []);
+
   const sys = computeFullState(fosState, leads);
   const mc  = MODE_CONFIG[sys.mode];
-
-  const strategyConfig = STRATEGY[fosState.strategy || 'A'];
-
   const needsStartDate = !fosState.startDate;
+
+  const hasDecisionsRequired = sys.hiring.some(h => h.hire) ||
+    sys.compliance.items.some(i => i.status === 'critical') ||
+    sys.mode === 'recovery';
 
   return (
     <div style={{ maxWidth:1320, margin:'0 auto' }}>
@@ -597,8 +686,6 @@ export const ControlCenter = () => {
             </button>
           </div>
         </div>
-
-        {/* Strategy progress bar */}
         <div style={{ marginTop:12 }}>
           <div style={{ display:'flex', justifyContent:'space-between', fontSize:9,
             color:'rgba(255,255,255,.3)', marginBottom:3, letterSpacing:'.3px' }}>
@@ -630,8 +717,11 @@ export const ControlCenter = () => {
         <TodayActions actions={sys.todayActions} />
       </div>
 
-      {/* ── ROW 2: Break-Next + Cash ──────────────────────────────────────────── */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+      {/* ── ROW 2: Decisions Required + Break-Next + Cash ────────────────────── */}
+      <div style={{ display:'grid', gridTemplateColumns: hasDecisionsRequired ? '1fr 1fr 1fr' : '1fr 1fr', gap:14, marginBottom:14 }}>
+        {hasDecisionsRequired && (
+          <DecisionsRequired hiring={sys.hiring} compliance={sys.compliance} mode={sys.mode} />
+        )}
         <BreakNext risks={sys.breakNext} />
         <CashPanel cashProjection={sys.cashProjection} />
       </div>
@@ -641,21 +731,26 @@ export const ControlCenter = () => {
         <PipelineStrip crm={sys.crm} />
       </div>
 
-      {/* ── ROW 4: Hiring + Do-Not + Compliance ──────────────────────────────── */}
+      {/* ── ROW 4: Trello Execution Layer ────────────────────────────────────── */}
+      <Card style={{ marginBottom:14 }}>
+        <TrelloPanel engineState={sys} leads={leads} onCRMUpdate={handleCRMUpdate} />
+      </Card>
+
+      {/* ── ROW 5: Hiring (full detail) + Do-Not + Compliance ────────────────── */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14, marginBottom:14 }}>
         <HiringPanel hiring={sys.hiring} />
         <DoNotPanel items={sys.doNotList} />
         <CompliancePanel compliance={sys.compliance} />
       </div>
 
-      {/* ── ROW 5: Workload ───────────────────────────────────────────────────── */}
+      {/* ── ROW 6: Workload ───────────────────────────────────────────────────── */}
       <div style={{ marginBottom:14 }}>
         <ResourceBar workload={sys.workload} resource={sys.resource} />
       </div>
 
       {/* ── Footer ───────────────────────────────────────────────────────────── */}
       <div style={{ fontSize:10, color:'#ccc', textAlign:'center', paddingBottom:20 }}>
-        Founder Operating System · Data from CRM auto-syncs every 5s · Last refresh: {new Date(lastRefresh).toLocaleTimeString()}
+        Founder Operating System · CRM auto-syncs every 5s · Last: {new Date(lastRefresh).toLocaleTimeString()}
       </div>
     </div>
   );
