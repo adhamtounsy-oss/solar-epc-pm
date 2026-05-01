@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { DossierModal } from './CRMView';
+import { DOC_TYPES, DOC_PHASES, DOC_STATUS, scaffoldDocuments } from '../engine/docScaffold';
 
 const PROJECTS_KEY = 'projects_v1';
 const LEADS_KEY    = 'crm_leads_v3';
@@ -92,6 +93,7 @@ const newProject = () => ({
   costs: [],
   procurement: [],
   commsLog: [],
+  documents: [],
   linkedLeadId: null,
 });
 
@@ -213,18 +215,24 @@ function ProjectForm({ project, leads, onSave, onCancel }) {
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const handleAutoFill = (lead) => {
-    setF(p => ({
-      ...p,
-      clientName:    lead.orgName     || p.clientName,
-      systemSizeKW:  lead.systemSizeKW || p.systemSizeKW,
-      contractValue: lead.dealValue    || p.contractValue,
-      notes: p.notes
-        ? p.notes
-        : [
-            lead.notes && `CRM Notes: ${lead.notes}`,
-            lead.nextAction && `Next Action: ${lead.nextAction}`,
-          ].filter(Boolean).join('\n'),
-    }));
+    setF(p => {
+      const docs = (!p.documents || p.documents.length === 0) && lead.stageData
+        ? scaffoldDocuments(lead, uid)
+        : p.documents;
+      return {
+        ...p,
+        clientName:    lead.orgName      || p.clientName,
+        systemSizeKW:  lead.systemSizeKW || p.systemSizeKW,
+        contractValue: lead.dealValue    || p.contractValue,
+        documents:     docs,
+        notes: p.notes
+          ? p.notes
+          : [
+              lead.notes      && `CRM Notes: ${lead.notes}`,
+              lead.nextAction && `Next Action: ${lead.nextAction}`,
+            ].filter(Boolean).join('\n'),
+      };
+    });
   };
 
   const handleSave = () => {
@@ -489,6 +497,208 @@ function ProjectCommsTab({ project, onChange }) {
             )}
           </div>
         ))
+      )}
+    </div>
+  );
+}
+
+// ── Document row ───────────────────────────────────────────────────────────────
+
+function DocumentRow({ doc, onChange, onDelete }) {
+  const [showNotes, setShowNotes] = useState(false);
+  const def = DOC_TYPES.find(d => d.id === doc.type) || DOC_TYPES[DOC_TYPES.length - 1];
+  const st  = DOC_STATUS[doc.status] || DOC_STATUS.pending;
+
+  return (
+    <div style={{ borderBottom: '1px solid #f0f2f5', paddingBottom: 6, marginBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+
+        <span style={{ fontSize: 14, flexShrink: 0 }}>{def.icon}</span>
+
+        {/* Type selector */}
+        <select
+          style={{ ...inp, width: 180, fontSize: 11, flex: '0 0 auto' }}
+          value={doc.type}
+          onChange={e => {
+            const nd = DOC_TYPES.find(d => d.id === e.target.value);
+            onChange({ ...doc, type: e.target.value, name: nd?.label || doc.name, critical: nd?.critical ?? false });
+          }}>
+          {DOC_PHASES.map(phase => (
+            <optgroup key={phase.id} label={phase.label}>
+              {DOC_TYPES.filter(d => d.phase === phase.id).map(d => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+
+        {/* Custom name override */}
+        <input
+          style={{ ...inp, flex: '1 1 110px', minWidth: 80, fontSize: 11 }}
+          value={doc.name === def.label ? '' : doc.name}
+          onChange={e => onChange({ ...doc, name: e.target.value || def.label })}
+          placeholder={def.label}
+        />
+
+        {/* Date */}
+        <input type="date" style={{ ...inp, width: 130, fontSize: 11 }}
+          value={doc.date} onChange={e => onChange({ ...doc, date: e.target.value })} />
+
+        {/* Status badge */}
+        <button
+          onClick={() => onChange({ ...doc, status: st.next })}
+          style={{ padding: '3px 9px', borderRadius: 8, fontSize: 10, fontWeight: 700,
+            color: st.color, background: st.bg, border: `1px solid ${st.color}40`,
+            cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+          {st.label}
+        </button>
+
+        {/* URL input + open link */}
+        <input
+          style={{ ...inp, flex: '1 1 150px', minWidth: 100, fontSize: 11 }}
+          value={doc.url}
+          onChange={e => onChange({ ...doc, url: e.target.value })}
+          placeholder="Paste Google Drive / Dropbox link…"
+        />
+        {doc.url && (
+          <a href={doc.url} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 11, color: T, fontWeight: 700, textDecoration: 'none',
+              flexShrink: 0, padding: '4px 8px', background: '#e8f8f9', borderRadius: 4 }}>
+            🔗 Open
+          </a>
+        )}
+
+        {/* Required badge */}
+        {doc.critical && doc.status === 'pending' && (
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#C0392B', background: '#fff5f5',
+            borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Required
+          </span>
+        )}
+
+        {/* Notes toggle */}
+        <button onClick={() => setShowNotes(v => !v)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10,
+            color: doc.notes ? '#b8860b' : '#ccc', padding: '0 3px', flexShrink: 0 }}
+          title={showNotes ? 'Hide notes' : 'Notes'}>
+          {showNotes ? '▲' : '▼'}
+        </button>
+
+        <button onClick={onDelete}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#ddd', padding: '0 2px', flexShrink: 0 }}>×</button>
+      </div>
+
+      {showNotes && (
+        <input
+          style={{ ...inp, marginTop: 5, fontSize: 11, marginLeft: 22 }}
+          value={doc.notes}
+          onChange={e => onChange({ ...doc, notes: e.target.value })}
+          placeholder="Notes (e.g. contract ref, submission date, file version)…"
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Documents tab ──────────────────────────────────────────────────────────────
+
+function DocumentsTab({ project, onChange }) {
+  const documents = project.documents || [];
+
+  const total       = documents.length;
+  const collected   = documents.filter(d => d.status !== 'pending').length;
+  const critPending = documents.filter(d => d.critical && d.status === 'pending');
+
+  const updateDoc = (id, u) => onChange({ ...project, documents: documents.map(d => d.id === id ? u : d) });
+  const deleteDoc = (id)    => onChange({ ...project, documents: documents.filter(d => d.id !== id) });
+  const addDoc    = ()      => onChange({ ...project, documents: [...documents, {
+    id: uid(), type: 'other', name: 'Other Document',
+    date: '', status: 'pending', url: '', notes: '', critical: false,
+  }]});
+
+  // Group by phase
+  const byPhase = Object.fromEntries(DOC_PHASES.map(p => [p.id, []]));
+  documents.forEach(d => {
+    const phase = (DOC_TYPES.find(t => t.id === d.type)?.phase) || 'other';
+    (byPhase[phase] || byPhase.other).push(d);
+  });
+
+  const pct = total > 0 ? Math.round(collected / total * 100) : 0;
+
+  return (
+    <div>
+      {/* Header: progress + add button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#888', marginBottom: 3 }}>
+            <span>Document completeness</span>
+            <span style={{ fontWeight: 700, color: pct === 100 ? GR : N }}>{pct}% · {collected}/{total}</span>
+          </div>
+          <div style={{ background: '#eee', borderRadius: 3, height: 5, overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%',
+              background: pct === 100 ? GR : pct >= 60 ? T : '#C8991A', transition: 'width .3s' }} />
+          </div>
+        </div>
+        <button onClick={addDoc} style={btnS()}>+ Add Document</button>
+      </div>
+
+      {/* Critical gap alert */}
+      {critPending.length > 0 && (
+        <div style={{ background: '#fff5f5', border: '1px solid #C0392B33', borderRadius: 6,
+          padding: '8px 12px', marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#C0392B', marginBottom: 4 }}>
+            ⚠ {critPending.length} required document{critPending.length > 1 ? 's' : ''} still pending
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 16px' }}>
+            {critPending.map(d => {
+              const def = DOC_TYPES.find(t => t.id === d.type);
+              return (
+                <span key={d.id} style={{ fontSize: 10, color: '#C0392B' }}>{def?.icon} {d.name}</span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {total === 0 ? (
+        <div style={{ fontSize: 11, color: '#bbb', padding: '20px 0', textAlign: 'center', lineHeight: 1.8 }}>
+          No documents yet.
+          <br />
+          <span style={{ fontSize: 10 }}>Link a CRM lead and it will auto-scaffold the full document checklist from the dossier.</span>
+        </div>
+      ) : (
+        DOC_PHASES.map(phase => {
+          const phaseDocs = byPhase[phase.id] || [];
+          if (phaseDocs.length === 0) return null;
+          const phaseDone = phaseDocs.filter(d => d.status !== 'pending').length;
+          const phasePct  = Math.round(phaseDone / phaseDocs.length * 100);
+
+          return (
+            <div key={phase.id} style={{ marginBottom: 16 }}>
+              {/* Phase header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+                paddingBottom: 5, borderBottom: `2px solid ${phase.color}22` }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: phase.color,
+                  textTransform: 'uppercase', letterSpacing: '.6px' }}>
+                  {phase.label}
+                </span>
+                <span style={{ fontSize: 9, color: '#aaa', fontWeight: 600 }}>
+                  {phaseDone}/{phaseDocs.length}
+                </span>
+                <div style={{ flex: 1, height: 3, background: '#eee', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ width: `${phasePct}%`, height: '100%',
+                    background: phasePct === 100 ? GR : phase.color, transition: 'width .3s' }} />
+                </div>
+              </div>
+
+              {phaseDocs.map(d => (
+                <DocumentRow key={d.id} doc={d}
+                  onChange={u => updateDoc(d.id, u)}
+                  onDelete={() => deleteDoc(d.id)} />
+              ))}
+            </div>
+          );
+        })
       )}
     </div>
   );
@@ -784,6 +994,7 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
         {secBtn('costs', `Costs (${project.costs.length})`)}
         {secBtn('procurement', `Procurement (${procurement.length})`)}
         {secBtn('comms', `Comms (${(project.commsLog||[]).length})`)}
+        {secBtn('documents', `Docs (${(project.documents||[]).filter(d=>d.status!=='pending').length}/${(project.documents||[]).length})`)}
         {catBreakdown.length > 0 && secBtn('breakdown', 'Breakdown')}
       </div>
 
@@ -865,6 +1076,11 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
         <ProjectCommsTab project={project} onChange={onChange} />
       )}
 
+      {/* Documents */}
+      {tab === 'documents' && (
+        <DocumentsTab project={project} onChange={onChange} />
+      )}
+
       {/* Breakdown */}
       {tab === 'breakdown' && (
         <div>
@@ -915,6 +1131,11 @@ function ProjectCard({ project, leads, onUpdate, onDelete }) {
   const pct  = cv > 0 ? Math.min(100, Math.round(recv / cv * 100)) : 0;
   const link = leads.find(l => l.id === project.linkedLeadId);
 
+  const docs        = project.documents || [];
+  const docsTotal   = docs.length;
+  const docsDone    = docs.filter(d => d.status !== 'pending').length;
+  const critMissing = docs.filter(d => d.critical && d.status === 'pending').length;
+
   if (editing) {
     return (
       <ProjectForm
@@ -934,11 +1155,19 @@ function ProjectCard({ project, leads, onUpdate, onDelete }) {
       >
         <div style={{ flex: 1, minWidth: 160 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: N }}>{project.name}</div>
-          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-            {project.clientName}{project.systemSizeKW ? ` · ${project.systemSizeKW} kWp` : ''}
+          <div style={{ fontSize: 11, color: '#888', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span>{project.clientName}{project.systemSizeKW ? ` · ${project.systemSizeKW} kWp` : ''}</span>
             {link && (
-              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: T, background: '#e8f8f9', borderRadius: 8, padding: '1px 7px' }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: T, background: '#e8f8f9', borderRadius: 8, padding: '1px 7px' }}>
                 CRM: {link.orgName}
+              </span>
+            )}
+            {docsTotal > 0 && (
+              <span style={{ fontSize: 9, fontWeight: 700,
+                color: critMissing > 0 ? '#C0392B' : docsDone === docsTotal ? GR : '#888',
+                background: critMissing > 0 ? '#fff5f5' : '#f5f5f5',
+                borderRadius: 4, padding: '1px 6px' }}>
+                📄 {docsDone}/{docsTotal}
               </span>
             )}
           </div>

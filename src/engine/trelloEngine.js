@@ -433,6 +433,97 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     }
   } catch {}
 
+  // ── Document gap tasks ─────────────────────────────────────────────────────
+  // Fires a Trello card for each missing critical document at the right stage.
+  try {
+    const rawProj = localStorage.getItem('projects_v1');
+    const allProjs = rawProj ? JSON.parse(rawProj) : [];
+
+    for (const proj of allProjs) {
+      if (proj.status === 'complete') continue;
+      const docs       = proj.documents || [];
+      const client     = proj.clientName || proj.name;
+      // Returns true if a doc of this type doesn't exist OR is still pending
+      const docPending = (typeId) => {
+        const d = docs.find(d => d.type === typeId);
+        return !d || d.status === 'pending';
+      };
+
+      // EPC Contract — critical for any active project
+      if (docPending('epc_contract')) {
+        add(task(
+          `doc-contract-${proj.id}`,
+          `File signed EPC contract — ${client}`,
+          `Signed EPC contract not yet filed in the document tracker.\nProject: ${proj.name}\nAction: Scan → upload to Google Drive → paste link in Projects → Documents tab.\nRequired before: procurement orders, DISCO application, any invoicing.`,
+          'COMPLIANCE', 'critical', 'this-week', 2, 'crm', proj.id, {}
+        ));
+      }
+
+      // Deposit invoice — once the deposit milestone has been invoiced/received
+      const depositMs = (proj.milestones || []).find(m =>
+        m.label.toLowerCase().includes('deposit') && m.status !== 'pending');
+      if (depositMs && docPending('deposit_invoice')) {
+        add(task(
+          `doc-deposit-invoice-${proj.id}`,
+          `File deposit invoice — ${client}`,
+          `Deposit milestone marked ${depositMs.status} but invoice not filed.\nProject: ${proj.name}\nAmount: EGP ${Number(depositMs.amount).toLocaleString()}\nAction: Upload invoice copy to Projects → Documents tab.`,
+          'COMPLIANCE', 'high', 'this-week', 1, 'crm', proj.id, {}
+        ));
+      }
+
+      // DISCO application — once project moves to in_progress
+      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('disco_application')) {
+        add(task(
+          `doc-disco-app-${proj.id}`,
+          `File DISCO application — ${client}`,
+          `Project is in progress but DISCO application receipt not filed.\nProject: ${proj.name}\nAction: Scan DISCO submission receipt → upload to Documents tab.\nRequired for: net metering approval, grid connection sign-off.`,
+          'COMPLIANCE', 'critical', 'this-week', 1, 'crm', proj.id, {}
+        ));
+      }
+
+      // IEC certificates — when procurement items exist without certs
+      const missingIEC = (proj.procurement || []).filter(i => i.iecCertStatus !== 'received');
+      if (missingIEC.length > 0 && (docPending('panel_iec') || docPending('inverter_iec'))) {
+        add(task(
+          `doc-iec-certs-${proj.id}`,
+          `Collect IEC certificates — ${client} (${missingIEC.length} items)`,
+          `${missingIEC.length} procurement item${missingIEC.length > 1 ? 's' : ''} without IEC certificates.\nProject: ${proj.name}\nItems: ${missingIEC.map(i => i.supplier || i.category).join(', ')}\nRequest cert from supplier on PO confirmation. Required for NREA compliance.`,
+          'COMPLIANCE', 'critical', 'this-week', 7, 'crm', proj.id, {}
+        ));
+      }
+
+      // Net metering approval — once in_progress, fires as backlog reminder
+      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('net_metering_approval')) {
+        add(task(
+          `doc-net-metering-${proj.id}`,
+          `File net metering approval — ${client}`,
+          `Net metering approval letter not yet filed.\nProject: ${proj.name}\nAction: Chase DISCO → once received, upload to Documents tab.\nRequired before commissioning sign-off.`,
+          'COMPLIANCE', 'high', 'backlog', 30, 'crm', proj.id, {}
+        ));
+      }
+
+      // Commissioning docs — when project reaches commissioning stage
+      if (proj.status === 'commissioning') {
+        if (docPending('commissioning_report')) {
+          add(task(
+            `doc-commissioning-${proj.id}`,
+            `Compile commissioning test report — ${client}`,
+            `Project at commissioning stage. Test report not yet filed.\nProject: ${proj.name}\nIncludes: DC/AC open-circuit tests, string IV curves, inverter logs, grid connection test.\nRequired for: warranty activation, client handover sign-off.`,
+            'TECHNICAL', 'critical', 'this-week', 3, 'crm', proj.id, {}
+          ));
+        }
+        if (docPending('handover_certificate')) {
+          add(task(
+            `doc-handover-${proj.id}`,
+            `File client handover certificate — ${client}`,
+            `Commissioning stage but signed handover certificate not filed.\nProject: ${proj.name}\nAction: Client signs certificate → scan → upload to Documents tab.\nTriggers: warranty period start, final payment milestone.`,
+            'EXECUTION', 'critical', 'this-week', 2, 'crm', proj.id, {}
+          ));
+        }
+      }
+    }
+  } catch {}
+
   // ── 3. Hiring-driven tasks ─────────────────────────────────────────────────
 
   for (const h of (hiring || [])) {

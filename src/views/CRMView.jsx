@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
+import { scaffoldDocuments } from '../engine/docScaffold';
 import {
   PIPELINE_STAGES, SEGMENTS, SOURCE_TYPES, PAIN_POINTS, TEMPERATURES,
   GOVERNORATES, CRM_TAGS, computeLeadScore, getScoreCategory,
@@ -34,13 +35,13 @@ const nextId = (arr, prefix) => {
 
 // ── Auto-project creation when a lead is won ───────────────────────────────────
 const _uid = () => `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-const _mkMs = (cv) => {
+const _mkMs = (cv) => { // eslint-disable-line no-unused-vars
   const c = Number(cv) || 0;
   return [
-    { id:_uid(), label:'Contract Deposit (30%)',         pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
-    { id:_uid(), label:'Equipment Delivery (30%)',       pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
-    { id:_uid(), label:'Installation Complete (30%)',    pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
-    { id:_uid(), label:'Commissioning & Handover (10%)', pct:10, amount:Math.round(c*.10), dueDate:'', status:'pending' },
+    { id:_uid(), label:'Contract Deposit (30%)',         pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending', invoicedDate:null },
+    { id:_uid(), label:'Equipment Delivery (30%)',       pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending', invoicedDate:null },
+    { id:_uid(), label:'Installation Complete (30%)',    pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending', invoicedDate:null },
+    { id:_uid(), label:'Commissioning & Handover (10%)', pct:10, amount:Math.round(c*.10), dueDate:'', status:'pending', invoicedDate:null },
   ];
 };
 
@@ -55,7 +56,9 @@ const autoCreateProject = (lead) => {
       systemSizeKW: lead.systemSizeKW || '', contractValue: lead.dealValue || '',
       startDate: todayStr(), expectedEndDate: '', status: 'planning',
       notes: lead.notes || '', milestones: _mkMs(lead.dealValue),
-      costs: [], linkedLeadId: lead.id,
+      costs: [], procurement: [], commsLog: [],
+      documents: scaffoldDocuments(lead, _uid),
+      linkedLeadId: lead.id,
     });
     localStorage.setItem('projects_v1', JSON.stringify(list));
     return true;
