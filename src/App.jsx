@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ControlCenter } from './views/ControlCenter';
-import { CRMView }       from './views/CRMView';
+import { ControlCenter }    from './views/ControlCenter';
+import { CRMView }           from './views/CRMView';
+import { SetupView }         from './views/SetupView';
+import { ProjectTracker }    from './views/ProjectTracker';
+import { PlaybooksView }     from './views/PlaybooksView';
 
 // ── Hash-based Trello setup ────────────────────────────────────────────────────
 // Visiting /#trello=BASE64 pre-configures Trello without needing the console.
@@ -22,8 +25,11 @@ const bootstrapFromHash = () => {
 };
 
 const TABS = [
-  { id:'control', label:'Control Center' },
-  { id:'crm',     label:'CRM / Leads' },
+  { id:'control',   label:'Control Center' },
+  { id:'crm',       label:'CRM / Leads'    },
+  { id:'setup',     label:'Setup & Legal'  },
+  { id:'projects',  label:'Projects'       },
+  { id:'playbooks', label:'Playbooks'      },
 ];
 
 export default function App() {
@@ -67,7 +73,7 @@ export default function App() {
 
       {/* Tab bar */}
       <div style={{ background:'#0D2137', padding:'0 20px',
-        borderBottom:'2px solid #C8991A', display:'flex', gap:2 }}>
+        borderBottom:'2px solid #C8991A', display:'flex', gap:2, flexWrap:'wrap' }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{ padding:'9px 20px', background:'transparent', border:'none',
@@ -83,8 +89,11 @@ export default function App() {
 
       {/* Content */}
       <div style={{ padding:'20px', minHeight:'calc(100vh - 96px)' }}>
-        {tab === 'control' && <ControlCenter />}
-        {tab === 'crm'     && <CRMView />}
+        {tab === 'control'   && <ControlCenter />}
+        {tab === 'crm'       && <CRMView />}
+        {tab === 'setup'     && <SetupView />}
+        {tab === 'projects'  && <ProjectTracker />}
+        {tab === 'playbooks' && <PlaybooksView />}
       </div>
     </div>
   );

@@ -32,7 +32,37 @@ const nextId = (arr, prefix) => {
   return `${prefix}-${String(Math.max(0,...nums)+1).padStart(3,'0')}`;
 };
 
-const EMPTY_LEAD = { orgName:'', segment:'School', governorate:'Cairo', contactPerson:'', contactRole:'', phone:'', whatsapp:'', email:'', website:'', sourceType:'Referral', monthlyBill:'', systemSizeKW:'', painPoint:'High Bills', temperature:'Warm', stage:'unqualified', nextAction:'', lastContacted:todayStr(), nextFollowUp:'', touches:'0', probability:'5', dealValue:'', notes:'', tags:[] };
+// ── Auto-project creation when a lead is won ───────────────────────────────────
+const _uid = () => `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+const _mkMs = (cv) => {
+  const c = Number(cv) || 0;
+  return [
+    { id:_uid(), label:'Contract Deposit (30%)',         pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
+    { id:_uid(), label:'Equipment Delivery (30%)',       pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
+    { id:_uid(), label:'Installation Complete (30%)',    pct:30, amount:Math.round(c*.30), dueDate:'', status:'pending' },
+    { id:_uid(), label:'Commissioning & Handover (10%)', pct:10, amount:Math.round(c*.10), dueDate:'', status:'pending' },
+  ];
+};
+
+const autoCreateProject = (lead) => {
+  try {
+    const raw  = localStorage.getItem('projects_v1');
+    const list = raw ? JSON.parse(raw) : [];
+    if (list.some(p => p.linkedLeadId === lead.id)) return false; // already exists
+    const name = `${lead.orgName}${lead.systemSizeKW ? ` — ${lead.systemSizeKW} kWp` : lead.segment ? ` — ${lead.segment}` : ''}`;
+    list.push({
+      id: _uid(), name, clientName: lead.orgName,
+      systemSizeKW: lead.systemSizeKW || '', contractValue: lead.dealValue || '',
+      startDate: todayStr(), expectedEndDate: '', status: 'planning',
+      notes: lead.notes || '', milestones: _mkMs(lead.dealValue),
+      costs: [], linkedLeadId: lead.id,
+    });
+    localStorage.setItem('projects_v1', JSON.stringify(list));
+    return true;
+  } catch { return false; }
+};
+
+const EMPTY_LEAD = { orgName:'', segment:'School', governorate:'Cairo', contactPerson:'', contactRole:'', phone:'', whatsapp:'', email:'', website:'', sourceType:'Referral', monthlyBill:'', systemSizeKW:'', painPoint:'High Bills', temperature:'Warm', stage:'unqualified', nextAction:'', lastContacted:todayStr(), nextFollowUp:'', touches:'0', probability:'5', dealValue:'', notes:'', tags:[], stageData:{} };
 
 // ── Micro-components ───────────────────────────────────────────────────────────
 const Chip = ({ label, color='#1A6B72', bg='#e8f8f9' }) => (
@@ -68,12 +98,494 @@ const MetricCard = ({ label, value, sub, color=N, urgent }) => (
 const PM_TRIGGERS = {
   feasibility_sold:      { icon:'📋', title:'Feasibility Study Sold — Create PM Task', color:T, bg:'#e8f8f9', action:'Go to Tasks tab → create "Prepare Feasibility Study for [Lead]" under WBS-3.' },
   proposal_sent:         { icon:'💰', title:'EPC Proposal Sent — Check Cash Exposure', color:AM, bg:'#fff3cd', action:'Confirm deposit collected. Verify FX escalation clause in proposal. Reserve cash for procurement exposure.' },
-  won:                   { icon:'🏆', title:'Contract Won — Launch Execution Workflow', color:GR, bg:'#e8f5e9', action:'Open Tasks tab → add project execution tasks: contract checklist, engineer briefing, procurement readiness, DISCO submission.' },
+  won:                   { icon:'🏆', title:'Contract Won — Execution Workflow Launched', color:GR, bg:'#e8f5e9', action:'Project automatically created in the Projects tab with 30/30/30/10 milestones. Also open Tasks tab → add execution tasks: contract checklist, engineer briefing, procurement readiness, DISCO submission.' },
+};
+
+// ── Stage Dossier Config ───────────────────────────────────────────────────────
+const STAGE_DOSSIER_CONFIG = [
+  {
+    stageId:'contacted', label:'First Contact & Needs', icon:'📞',
+    fields:[
+      { k:'contactDate',          label:'Contact Date',                type:'date' },
+      { k:'channel',              label:'Channel',                     type:'select', opts:['Call','WhatsApp','Meeting','Email'] },
+      { k:'decisionMakerName',    label:'Decision Maker Name',         type:'text' },
+      { k:'decisionMakerRole',    label:'Decision Maker Role',         type:'text' },
+      { k:'needsSummary',         label:'Needs / Pain Summary',        type:'textarea', full:true },
+      { k:'budgetIndication',     label:'Budget Indication',           type:'select', opts:['Unknown','< EGP 500K','EGP 500K–1M','EGP 1M–3M','EGP 3M+'] },
+      { k:'timeline',             label:'Client Timeline',             type:'select', opts:['Unclear','Urgent (< 3 months)','3–6 months','6–12 months','1 year+'] },
+      { k:'utilityBillCollected', label:'Utility Bill Collected',      type:'checkbox' },
+      { k:'roughSizeKwp',         label:'Rough Size Estimate (kWp)',   type:'number' },
+      { k:'nextCommitment',       label:'Next Commitment Made',        type:'text', full:true },
+    ],
+    summaryFn: d => [d.contactDate, d.channel, d.decisionMakerName && `DM: ${d.decisionMakerName}`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'qualified', label:'Qualification Gate', icon:'✅',
+    fields:[
+      { k:'qualifiedDate',             label:'Qualified Date',                    type:'date' },
+      { k:'monthlyBillConfirmedEGP',   label:'Monthly Bill Confirmed (EGP)',      type:'number' },
+      { k:'connectedLoadKva',          label:'Connected Load (kVA)',              type:'number' },
+      { k:'gridPhase',                 label:'Grid Phase',                        type:'select', opts:['Single Phase','Three Phase'] },
+      { k:'tariffCategory',            label:'Tariff Category',                   type:'select', opts:['Commercial','Industrial','Agricultural','Residential'] },
+      { k:'ownershipConfirmed',        label:'Roof / Land Ownership Confirmed',   type:'checkbox' },
+      { k:'decisionMakerReached',      label:'Decision Maker Reached',            type:'checkbox' },
+      { k:'existingDiesel',            label:'Diesel Generator Present',          type:'checkbox' },
+      { k:'dieselNotes',               label:'Diesel / Backup Notes',             type:'text', full:true },
+      { k:'objections',                label:'Objections Raised',                 type:'textarea', full:true },
+    ],
+    summaryFn: d => [d.qualifiedDate, d.monthlyBillConfirmedEGP && `Bill: EGP ${Number(d.monthlyBillConfirmedEGP).toLocaleString()}`, d.gridPhase].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'site_visit_scheduled', label:'Site Visit — Appointment', icon:'📅',
+    fields:[
+      { k:'scheduledDate',        label:'Visit Date',             type:'date' },
+      { k:'scheduledTime',        label:'Visit Time',             type:'time' },
+      { k:'siteAddress',          label:'Site Address',           type:'text', full:true },
+      { k:'onSiteContactName',    label:'On-Site Contact Name',   type:'text' },
+      { k:'onSiteContactPhone',   label:'On-Site Contact Phone',  type:'tel' },
+      { k:'accessNotes',          label:'Access Instructions',    type:'textarea', full:true },
+    ],
+    summaryFn: d => [d.scheduledDate, d.scheduledTime, d.siteAddress && d.siteAddress.slice(0,40)].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'site_visit_completed', label:'Site Visit — Technical Assessment', icon:'🔍', isSpecial:'site_visit',
+    fields:[
+      { k:'visitDate',                label:'Visit Date',                    type:'date' },
+      { k:'gpsCoords',                label:'GPS Coordinates',               type:'text' },
+      { k:'roofType',                 label:'Roof Type',                     type:'select', opts:['Concrete Flat','Concrete Pitched','Steel Structure','Ground Mount','Carport'] },
+      { k:'totalRoofAreaM2',          label:'Total Roof Area (m²)',          type:'number' },
+      { k:'usableAreaM2',             label:'Usable Area (m²)',              type:'number' },
+      { k:'azimuthDeg',               label:'Azimuth (°)',                   type:'number' },
+      { k:'tiltDeg',                  label:'Tilt (°)',                      type:'number' },
+      { k:'shadingRisk',              label:'Shading Risk',                  type:'select', opts:['None','Low','Medium','High'] },
+      { k:'shadingNotes',             label:'Shading Notes',                 type:'textarea', full:true },
+      { k:'gridPhaseConfirmed',       label:'Grid Phase (confirmed)',        type:'select', opts:['Single Phase (230V)','Three Phase (400V)'] },
+      { k:'mainBreakerAmps',          label:'Main Breaker (A)',              type:'number' },
+      { k:'dbPanelBrand',             label:'DB Panel Brand',                type:'text' },
+      { k:'disco',                    label:'DISCO',                         type:'select', opts:['EEDCS','UEDCO','UPPCO','BEDC','MEDC','North Cairo','South Cairo','Other'] },
+      { k:'feederVoltage',            label:'Feeder Voltage',                type:'select', opts:['LV 380V','MV 11kV','MV 22kV','MV 33kV'] },
+      { k:'netMeteringEligible',      label:'Net Metering Eligible',         type:'checkbox' },
+      { k:'netMeteringNotes',         label:'Net Metering Notes',            type:'text', full:true },
+      { k:'avgMonthlyKwh',            label:'Avg Monthly Consumption (kWh)', type:'number' },
+      { k:'peakDemandKva',            label:'Peak Demand (kVA)',             type:'number' },
+      { k:'operatingProfile',         label:'Operating Profile',             type:'select', opts:['Office Hours (8h/day)','Two Shifts (16h/day)','24/7','Seasonal'] },
+      { k:'facilitiesContactName',    label:'Facilities Contact Name',       type:'text' },
+      { k:'facilitiesContactPhone',   label:'Facilities Contact Phone',      type:'tel' },
+      { k:'photoCount',               label:'Photos Taken',                  type:'number' },
+      { k:'recommendedSizeKwp',       label:'Recommended Size (kWp)',        type:'number' },
+      { k:'estimatedPanelCount',      label:'Panel Count (est.)',            type:'number' },
+      { k:'estimatedAnnualYieldKwh',  label:'Annual Yield (kWh)',            type:'number' },
+      { k:'estimatedAnnualSavingsEGP',label:'Annual Savings (EGP)',          type:'number' },
+      { k:'roughPaybackYears',        label:'Rough Payback (years)',         type:'number' },
+    ],
+    summaryFn: d => [d.visitDate, d.recommendedSizeKwp && `${d.recommendedSizeKwp} kWp est.`, d.shadingRisk && `Shading: ${d.shadingRisk}`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'feasibility_proposed', label:'Feasibility Proposal', icon:'📋',
+    fields:[
+      { k:'proposalDate',       label:'Proposal Date',           type:'date' },
+      { k:'feeQuotedEGP',       label:'Fee Quoted (EGP)',        type:'number' },
+      { k:'studyScope',         label:'Study Scope Summary',     type:'text', full:true },
+      { k:'proposalValidUntil', label:'Valid Until',             type:'date' },
+      { k:'clientResponse',     label:'Client Response',         type:'select', opts:['Pending','Accepted','Considering','Price Objection','Rejected'] },
+      { k:'clientObjections',   label:'Objections / Questions',  type:'textarea', full:true },
+    ],
+    summaryFn: d => [d.proposalDate, d.feeQuotedEGP && `EGP ${Number(d.feeQuotedEGP).toLocaleString()}`, d.clientResponse].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'feasibility_sold', label:'Feasibility Deposit', icon:'💰',
+    fields:[
+      { k:'depositCollectedEGP', label:'Deposit Collected (EGP)', type:'number' },
+      { k:'paymentMethod',       label:'Payment Method',          type:'select', opts:['Bank Transfer','Cash','Cheque'] },
+      { k:'receiptRef',          label:'Receipt / Invoice Ref',   type:'text' },
+      { k:'deliveryPromisedBy',  label:'Delivery Promised By',    type:'date' },
+      { k:'assignedTo',          label:'Assigned To',             type:'text' },
+    ],
+    summaryFn: d => [d.depositCollectedEGP && `EGP ${Number(d.depositCollectedEGP).toLocaleString()}`, d.deliveryPromisedBy && `Due: ${d.deliveryPromisedBy}`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'feasibility_delivered', label:'Feasibility Study', icon:'📊',
+    fields:[
+      { k:'deliveryDate',          label:'Delivery Date',            type:'date' },
+      { k:'docRef',                label:'Document Reference',       type:'text' },
+      { k:'finalSizeKwp',          label:'Final System Size (kWp)',  type:'number' },
+      { k:'panelBrandModel',       label:'Panel Brand / Model',      type:'text' },
+      { k:'inverterBrandModel',    label:'Inverter Brand / Model',   type:'text' },
+      { k:'annualYieldKwh',        label:'Annual Yield (kWh/yr)',    type:'number' },
+      { k:'performanceRatioPct',   label:'Performance Ratio (%)',    type:'number' },
+      { k:'selfConsumptionPct',    label:'Self-Consumption (%)',     type:'number' },
+      { k:'co2SavedTonsYear',      label:'CO₂ Saved (t/yr)',         type:'number' },
+      { k:'simplePaybackYears',    label:'Payback (years)',          type:'number' },
+      { k:'irr',                   label:'IRR (%)',                  type:'number' },
+      { k:'npvEGP',                label:'NPV (EGP)',                type:'number' },
+      { k:'clientFeedback',        label:'Client Feedback at Delivery', type:'textarea', full:true },
+    ],
+    summaryFn: d => [d.deliveryDate, d.finalSizeKwp && `${d.finalSizeKwp} kWp`, d.simplePaybackYears && `${d.simplePaybackYears}yr payback`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'proposal_sent', label:'EPC Proposal', icon:'📄',
+    fields:[
+      { k:'proposalRef',           label:'Proposal Reference',        type:'text' },
+      { k:'sentDate',              label:'Sent Date',                  type:'date' },
+      { k:'contractValueEGP',      label:'Contract Value (EGP)',       type:'number' },
+      { k:'paymentTerms',          label:'Payment Terms',              type:'select', opts:['30/30/30/10','40/40/20','50/50','Custom'] },
+      { k:'fxClause',              label:'FX Escalation Clause',       type:'checkbox' },
+      { k:'panelBrand',            label:'Panel Brand',                type:'text' },
+      { k:'inverterBrand',         label:'Inverter Brand',             type:'text' },
+      { k:'warrantyYearsPanels',   label:'Panel Warranty (yrs)',       type:'number' },
+      { k:'warrantyYearsInverter', label:'Inverter Warranty (yrs)',    type:'number' },
+      { k:'timelineWeeks',         label:'Project Timeline (wks)',     type:'number' },
+      { k:'validUntil',            label:'Valid Until',                type:'date' },
+      { k:'docRef',                label:'Document Reference',         type:'text' },
+    ],
+    summaryFn: d => [d.sentDate, d.contractValueEGP && `EGP ${(Number(d.contractValueEGP)/1e6).toFixed(1)}M`, d.fxClause ? 'FX ✓' : 'No FX clause'].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'negotiation', label:'Negotiation', icon:'🤝',
+    fields:[
+      { k:'mainStickingPoints',  label:'Main Sticking Points',      type:'textarea', full:true },
+      { k:'concessionsMade',     label:'Concessions Made',          type:'textarea', full:true },
+      { k:'marginImpactEGP',     label:'Margin Impact (EGP)',       type:'number' },
+      { k:'revisedProposalSent', label:'Revised Proposal Sent',     type:'checkbox' },
+    ],
+    summaryFn: d => [d.mainStickingPoints && d.mainStickingPoints.slice(0,60), d.marginImpactEGP && `Margin -EGP ${Number(d.marginImpactEGP).toLocaleString()}`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'won', label:'Contract Won', icon:'🏆',
+    fields:[
+      { k:'contractSignedDate', label:'Contract Signed Date',  type:'date' },
+      { k:'contractRef',        label:'Contract Reference',    type:'text' },
+      { k:'depositClearedEGP',  label:'Deposit Cleared (EGP)', type:'number' },
+      { k:'depositReceiptRef',  label:'Deposit Receipt Ref',   type:'text' },
+      { k:'kickoffDate',        label:'Kickoff Date',          type:'date' },
+      { k:'engineerBrief',      label:'Brief for Engineer',    type:'textarea', full:true },
+    ],
+    summaryFn: d => [d.contractSignedDate, d.depositClearedEGP && `EGP ${Number(d.depositClearedEGP).toLocaleString()} cleared`].filter(Boolean).join(' · '),
+  },
+  {
+    stageId:'lost', label:'Deal Lost', icon:'❌',
+    fields:[
+      { k:'lossDate',           label:'Loss Date',               type:'date' },
+      { k:'lossReason',         label:'Loss Reason',             type:'select', opts:['Price','Budget Cut','Timing','Competitor Chosen','Scope Too Large','Regulatory','Relationship','Other'] },
+      { k:'competitorName',     label:'Competitor Name',         type:'text' },
+      { k:'competitorPriceEGP', label:'Competitor Price (EGP)',  type:'number' },
+      { k:'ourFinalPriceEGP',   label:'Our Final Price (EGP)',   type:'number' },
+      { k:'lessonsLearned',     label:'Lessons Learned',         type:'textarea', full:true },
+      { k:'futureOpportunity',  label:'Future Opportunity?',     type:'checkbox' },
+      { k:'nurtureDate',        label:'Reactivate On',           type:'date' },
+    ],
+    summaryFn: d => [d.lossDate, d.lossReason, d.competitorName && `vs. ${d.competitorName}`].filter(Boolean).join(' · '),
+  },
+];
+
+// ── Auto-Sizing Calculator ─────────────────────────────────────────────────────
+const AutoSizingCalc = ({ data, lead, onChange, setLead }) => {
+  const avg = parseFloat(data.avgMonthlyKwh) || 0;
+  if (avg === 0) return (
+    <div style={{ gridColumn:'1/-1', background:'#f8f9fa', border:'1px dashed #dde1e7', borderRadius:6, padding:'10px 14px', fontSize:11, color:'#aaa', marginBottom:4 }}>
+      Enter <b>Avg Monthly Consumption (kWh)</b> below to auto-calculate system sizing.
+    </div>
+  );
+  const tariff  = lead.monthlyBill && avg ? parseFloat(lead.monthlyBill) / avg : 0.8;
+  const kWp     = (avg / 30 / 5.5) / 0.75;
+  const panels  = Math.ceil(kWp * 1000 / 400);
+  const yield_  = Math.round(kWp * 1500);
+  const savings = Math.round(yield_ * (tariff || 0.8));
+  const pb      = savings > 0 ? (Math.round(kWp * 8000) / savings).toFixed(1) : '—';
+  const apply = () => {
+    onChange({ recommendedSizeKwp:parseFloat(kWp.toFixed(1)), estimatedPanelCount:panels, estimatedAnnualYieldKwh:yield_, estimatedAnnualSavingsEGP:savings, roughPaybackYears:parseFloat(pb)||0 });
+    if (!lead.systemSizeKW) setLead(p => ({ ...p, systemSizeKW:kWp.toFixed(1) }));
+  };
+  return (
+    <div style={{ gridColumn:'1/-1', background:'#f0f7f4', border:`1px solid ${T}`, borderRadius:6, padding:12, marginBottom:4 }}>
+      <div style={{ fontSize:10, fontWeight:900, color:T, textTransform:'uppercase', letterSpacing:'1px', marginBottom:10 }}>Auto-Sizing Calculator (Egypt averages)</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))', gap:6, marginBottom:10 }}>
+        {[
+          { label:'Daily Load',     value:`${(avg/30).toFixed(0)} kWh` },
+          { label:'System Size',    value:`${kWp.toFixed(1)} kWp` },
+          { label:'Panels',         value:`${panels} × 400W` },
+          { label:'Annual Yield',   value:`${yield_.toLocaleString()} kWh` },
+          { label:'Annual Savings', value:`EGP ${savings.toLocaleString()}` },
+          { label:'Payback',        value:`~${pb} yr` },
+        ].map(item => (
+          <div key={item.label} style={{ background:'#fff', borderRadius:4, padding:'5px 8px', textAlign:'center', border:`1px solid ${T}33` }}>
+            <div style={{ fontSize:8, color:'#888', fontWeight:700, textTransform:'uppercase', marginBottom:2 }}>{item.label}</div>
+            <div style={{ fontSize:12, fontWeight:900, color:N }}>{item.value}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+        <button onClick={apply} style={{ ...BTN, background:T, color:'#fff', fontSize:11 }}>↙ Apply to Output Fields</button>
+        <span style={{ fontSize:9, color:'#aaa' }}>5.5h peak sun · PR 0.75 · EGP 8,000/kWp est. CAPEX</span>
+      </div>
+    </div>
+  );
+};
+
+// ── Stage Dossier Section ──────────────────────────────────────────────────────
+const StageDossierSection = ({ stageId, label, icon, fields, summaryFn, data, isCurrent, isFuture, isOpen, hasData, onToggle, onChange, lead, setLead, isSpecial }) => {
+  const sd = data || {};
+  const textFields = fields.filter(f => f.type !== 'checkbox');
+  const filled = textFields.filter(f => sd[f.k] && sd[f.k] !== '').length;
+  const completionPct = textFields.length > 0 ? Math.round(filled / textFields.length * 100) : 0;
+  const borderColor = isCurrent ? G : hasData ? `${T}88` : '#e0e0e0';
+  return (
+    <div style={{ border:`1px solid ${borderColor}`, borderRadius:6, marginBottom:8, overflow:'hidden', opacity:isFuture ? 0.4 : 1 }}>
+      <div onClick={isFuture ? undefined : onToggle}
+        style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:isCurrent ? '#fffdf2' : '#fff', cursor:isFuture ? 'default' : 'pointer', userSelect:'none' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{ fontSize:14 }}>{icon}</span>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:isFuture ? '#bbb' : N }}>{label}</div>
+            {!isFuture && summaryFn && hasData && !isOpen && (
+              <div style={{ fontSize:10, color:'#888', marginTop:2, maxWidth:340 }}>{summaryFn(sd)}</div>
+            )}
+          </div>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+          {isFuture && <span style={{ fontSize:10, color:'#ccc' }}>Not yet reached</span>}
+          {!isFuture && completionPct > 0 && (
+            <span style={{ fontSize:9, fontWeight:900, color:completionPct===100?GR:AM, background:completionPct===100?'#e8f5e9':'#fff3cd', borderRadius:10, padding:'1px 7px' }}>{completionPct}%</span>
+          )}
+          {!isFuture && !hasData && <span style={{ width:8, height:8, borderRadius:'50%', background:'#e0e0e0', display:'inline-block' }} />}
+          {!isFuture && hasData && <span style={{ width:8, height:8, borderRadius:'50%', background:GR, display:'inline-block' }} />}
+          {!isFuture && <span style={{ fontSize:11, color:'#bbb', marginLeft:2 }}>{isOpen ? '▲' : '▼'}</span>}
+        </div>
+      </div>
+      {isOpen && !isFuture && (
+        <div style={{ padding:'4px 14px 14px', borderTop:`1px solid ${borderColor}` }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:10 }}>
+            {isSpecial === 'site_visit' && (
+              <AutoSizingCalc data={sd} lead={lead} onChange={onChange} setLead={setLead} />
+            )}
+            {fields.map(field => (
+              <div key={field.k} style={{ gridColumn:field.full ? '1/-1' : undefined }}>
+                <div style={{ ...SL, marginBottom:4 }}>{field.label}</div>
+                {field.type === 'checkbox' ? (
+                  <label style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:12, marginTop:4 }}>
+                    <input type="checkbox" checked={sd[field.k]||false} onChange={e => onChange({ [field.k]:e.target.checked })} style={{ accentColor:T, width:14, height:14 }} />
+                    Yes
+                  </label>
+                ) : field.type === 'select' ? (
+                  <select style={INP} value={sd[field.k]||''} onChange={e => onChange({ [field.k]:e.target.value })}>
+                    <option value="">— select —</option>
+                    {field.opts.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                ) : field.type === 'textarea' ? (
+                  <textarea rows={2} style={{ ...INP, resize:'vertical', fontSize:12 }} value={sd[field.k]||''} onChange={e => onChange({ [field.k]:e.target.value })} />
+                ) : (
+                  <input type={field.type} style={INP} value={sd[field.k]||''} onChange={e => onChange({ [field.k]:e.target.value })} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Dossier Tab ────────────────────────────────────────────────────────────────
+const DossierTab = ({ f, setF }) => {
+  const currentStageIdx = PIPELINE_STAGES.findIndex(s => s.id === f.stage);
+  const [openSection, setOpenSection] = useState(f.stage);
+  const setStageData = (stageId, updates) =>
+    setF(prev => ({ ...prev, stageData:{ ...(prev.stageData||{}), [stageId]:{ ...(prev.stageData?.[stageId]||{}), ...updates } } }));
+  const withData = STAGE_DOSSIER_CONFIG.filter(cfg => {
+    const d = f.stageData?.[cfg.stageId] || {};
+    return Object.values(d).some(v => v !== '' && v !== false && v != null);
+  }).length;
+  return (
+    <div style={{ padding:'14px 20px 20px', maxHeight:520, overflowY:'auto' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+        <div style={{ fontSize:11, color:'#888' }}>Structured outputs for each pipeline stage — flows into Projects tab and print dossier.</div>
+        <span style={{ fontSize:11, fontWeight:700, color:T, flexShrink:0 }}>{withData} / {STAGE_DOSSIER_CONFIG.length} sections filled</span>
+      </div>
+      {STAGE_DOSSIER_CONFIG.map(cfg => {
+        const stageIdx = PIPELINE_STAGES.findIndex(s => s.id === cfg.stageId);
+        const isAccessible = cfg.stageId === 'lost' ? f.stage === 'lost' : stageIdx <= currentStageIdx;
+        const isCurrent = cfg.stageId === f.stage;
+        const data = f.stageData?.[cfg.stageId] || {};
+        const hasData = Object.entries(data).some(([,v]) => v !== '' && v !== false && v != null);
+        return (
+          <StageDossierSection key={cfg.stageId} {...cfg}
+            data={data} isCurrent={isCurrent} isFuture={!isAccessible}
+            isOpen={openSection === cfg.stageId} hasData={hasData}
+            onToggle={() => setOpenSection(prev => prev === cfg.stageId ? null : cfg.stageId)}
+            onChange={updates => setStageData(cfg.stageId, updates)}
+            lead={f} setLead={setF}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+// ── Dossier Timeline Modal ─────────────────────────────────────────────────────
+const buildDossierHTML = (lead) => {
+  const currentStageIdx = PIPELINE_STAGES.findIndex(s => s.id === lead.stage);
+  const stagesWithData  = STAGE_DOSSIER_CONFIG.filter(cfg => {
+    const idx = PIPELINE_STAGES.findIndex(s => s.id === cfg.stageId);
+    if (!(cfg.stageId === 'lost' ? lead.stage === 'lost' : idx <= currentStageIdx)) return false;
+    const d = lead.stageData?.[cfg.stageId] || {};
+    return Object.values(d).some(v => v !== '' && v !== false && v != null);
+  });
+  const sv = lead.stageData?.site_visit_completed || {};
+  const fd = lead.stageData?.feasibility_delivered || {};
+  const ps = lead.stageData?.proposal_sent || {};
+  const finalSize = fd.finalSizeKwp || sv.recommendedSizeKwp || lead.systemSizeKW;
+  const fmtV = (field, val) => field.type==='checkbox' ? (val?'✓ Yes':'—') : field.type==='number' ? Number(val).toLocaleString() : String(val);
+  const summaryItems = [
+    { label:'Stage',        value: PIPELINE_STAGES.find(s=>s.id===lead.stage)?.label || lead.stage },
+    { label:'System Size',  value: finalSize ? `${finalSize} kWp` : '—' },
+    { label:'Deal Value',   value: ps.contractValueEGP ? `EGP ${Number(ps.contractValueEGP).toLocaleString()}` : lead.dealValue ? `EGP ${Number(lead.dealValue).toLocaleString()}` : '—' },
+    { label:'Payback',      value: fd.simplePaybackYears ? `${fd.simplePaybackYears} yr` : sv.roughPaybackYears ? `~${sv.roughPaybackYears} yr` : '—' },
+    { label:'IRR',          value: fd.irr ? `${fd.irr}%` : '—' },
+    { label:'DISCO',        value: sv.disco || '—' },
+  ];
+  const stageCards = stagesWithData.map(cfg => {
+    const d = lead.stageData?.[cfg.stageId] || {};
+    const filled = cfg.fields.filter(f => d[f.k] && d[f.k] !== '' && d[f.k] !== false);
+    return `<div class="card"><div class="card-hdr">${cfg.icon} ${cfg.label}</div><div class="fields">${filled.map(f=>`<div class="field"><span class="fl">${f.label}</span><span class="fv">${fmtV(f,d[f.k])}</span></div>`).join('')}</div></div>`;
+  }).join('');
+  const win = window.open('', '_blank', 'width=900,height=700');
+  if (!win) return;
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${lead.orgName} — Lead Dossier</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;padding:24px}
+  h1{font-size:18px;color:#0D2137;margin-bottom:4px}.meta{color:#888;font-size:10px;margin-bottom:16px}
+  .summary{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;background:#f8f9fa;padding:12px;border-radius:4px;margin-bottom:20px}
+  .si label{font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#888;display:block;margin-bottom:2px}.si strong{font-size:13px;color:#0D2137}
+  .card{margin-bottom:18px;page-break-inside:avoid}.card-hdr{font-size:12px;font-weight:900;color:#0D2137;border-bottom:2px solid #1A6B72;padding-bottom:5px;margin-bottom:10px}
+  .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:5px 16px}.field{padding:3px 0}
+  .fl{font-size:8px;text-transform:uppercase;letter-spacing:.4px;color:#888;display:block;margin-bottom:1px}.fv{font-size:11px;color:#1a1a1a}
+  @page{margin:15mm}@media print{body{padding:0}}</style></head>
+  <body><h1>${lead.orgName}</h1>
+  <div class="meta">${lead.id} · ${[lead.contactPerson,lead.segment,lead.governorate].filter(Boolean).join(' · ')} · Printed ${new Date().toLocaleDateString('en-GB')}</div>
+  <div class="summary">${summaryItems.map(i=>`<div class="si"><label>${i.label}</label><strong>${i.value}</strong></div>`).join('')}</div>
+  ${stageCards}</body></html>`);
+  win.document.close(); win.print();
+};
+
+const DossierModal = ({ lead, onClose, onEdit }) => {
+  const currentStageIdx = PIPELINE_STAGES.findIndex(s => s.id === lead.stage);
+  const reachedStages   = STAGE_DOSSIER_CONFIG.filter(cfg => {
+    const idx = PIPELINE_STAGES.findIndex(s => s.id === cfg.stageId);
+    return cfg.stageId === 'lost' ? lead.stage === 'lost' : idx <= currentStageIdx;
+  });
+  const stagesWithData  = reachedStages.filter(cfg => {
+    const d = lead.stageData?.[cfg.stageId] || {};
+    return Object.values(d).some(v => v !== '' && v !== false && v != null);
+  });
+  const sv = lead.stageData?.site_visit_completed || {};
+  const fd = lead.stageData?.feasibility_delivered || {};
+  const ps = lead.stageData?.proposal_sent || {};
+  const finalSize = fd.finalSizeKwp || sv.recommendedSizeKwp || lead.systemSizeKW;
+  const score = computeLeadScore(lead);
+
+  const summaryItems = [
+    { label:'System Size',   value: finalSize ? `${finalSize} kWp` : null },
+    { label:'Annual Yield',  value: fd.annualYieldKwh ? `${Number(fd.annualYieldKwh).toLocaleString()} kWh/yr` : sv.estimatedAnnualYieldKwh ? `~${Number(sv.estimatedAnnualYieldKwh).toLocaleString()} kWh/yr` : null },
+    { label:'Payback',       value: fd.simplePaybackYears ? `${fd.simplePaybackYears} yr` : sv.roughPaybackYears ? `~${sv.roughPaybackYears} yr` : null },
+    { label:'IRR',           value: fd.irr ? `${fd.irr}%` : null },
+    { label:'Contract',      value: ps.contractValueEGP ? fmtEGP(ps.contractValueEGP) : lead.dealValue ? fmtEGP(lead.dealValue) : null },
+    { label:'DISCO',         value: sv.disco || null },
+  ].filter(x => x.value);
+
+  return (
+    <div onClick={e => e.target===e.currentTarget && onClose()}
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:1100, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'32px 16px', overflowY:'auto' }}>
+      <div style={{ background:'#fff', borderRadius:8, width:'100%', maxWidth:820, boxShadow:'0 24px 64px rgba(0,0,0,.35)', marginBottom:40 }}>
+
+        {/* Header */}
+        <div style={{ background:N, padding:'14px 20px', borderRadius:'8px 8px 0 0', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div>
+            <div style={{ fontWeight:900, fontSize:15, color:G }}>{lead.orgName}</div>
+            <div style={{ fontSize:10, color:'rgba(255,255,255,.4)', marginTop:2 }}>Lead Dossier · {lead.id}{lead.contactPerson ? ` · ${lead.contactPerson}` : ''}</div>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <StagePill stageId={lead.stage} />
+            <ScoreChip score={score} />
+            <button onClick={onClose} style={{ background:'none', border:'none', color:'#aaa', fontSize:22, cursor:'pointer' }}>×</button>
+          </div>
+        </div>
+
+        {/* Tech summary strip */}
+        {summaryItems.length > 0 && (
+          <div style={{ background:'#f8f9fa', padding:'12px 20px', borderBottom:'1px solid #eee', display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))', gap:12 }}>
+            {summaryItems.map(item => (
+              <div key={item.label}>
+                <div style={{ fontSize:8, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:2 }}>{item.label}</div>
+                <div style={{ fontSize:13, fontWeight:800, color:N }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Stage timeline nav */}
+        <div style={{ padding:'10px 20px', borderBottom:'1px solid #eee', display:'flex', gap:14, overflowX:'auto', alignItems:'flex-start' }}>
+          {reachedStages.map(cfg => {
+            const hasData  = stagesWithData.some(s => s.stageId === cfg.stageId);
+            const isCurrent = cfg.stageId === lead.stage;
+            return (
+              <div key={cfg.stageId} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3, opacity:hasData?1:0.3, flexShrink:0, minWidth:50 }}>
+                <span style={{ fontSize:14 }}>{cfg.icon}</span>
+                <div style={{ width:8, height:8, borderRadius:'50%', background: isCurrent ? G : hasData ? T : '#ddd' }} />
+                <div style={{ fontSize:8, color:'#888', textAlign:'center', maxWidth:60, lineHeight:1.2 }}>{cfg.label.split(' — ')[0]}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Stage data cards */}
+        <div style={{ padding:'16px 20px 20px', maxHeight:500, overflowY:'auto' }}>
+          {stagesWithData.length === 0 ? (
+            <div style={{ textAlign:'center', padding:'32px 20px', color:'#aaa' }}>
+              <div style={{ fontSize:28, marginBottom:10 }}>📋</div>
+              <div style={{ fontSize:13, marginBottom:6 }}>No stage data captured yet.</div>
+              <div style={{ fontSize:11 }}>Open the lead → Stage Dossier tab → fill in sections as this lead progresses.</div>
+            </div>
+          ) : stagesWithData.map(cfg => {
+            const d = lead.stageData?.[cfg.stageId] || {};
+            const filled = cfg.fields.filter(f => d[f.k] && d[f.k] !== '' && d[f.k] !== false);
+            return (
+              <div key={cfg.stageId} style={{ marginBottom:20 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, paddingBottom:6, marginBottom:10, borderBottom:`2px solid ${T}` }}>
+                  <span style={{ fontSize:16 }}>{cfg.icon}</span>
+                  <span style={{ fontSize:13, fontWeight:900, color:N }}>{cfg.label}</span>
+                  {cfg.summaryFn && <span style={{ fontSize:10, color:'#888', marginLeft:'auto' }}>{cfg.summaryFn(d)}</span>}
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))', gap:'5px 14px' }}>
+                  {filled.map(field => (
+                    <div key={field.k} style={{ padding:'3px 0' }}>
+                      <div style={{ fontSize:9, fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:'.4px', marginBottom:2 }}>{field.label}</div>
+                      <div style={{ fontSize:12, color:N, fontWeight:['number','date'].includes(field.type)?700:400, lineHeight:1.4, wordBreak:'break-word' }}>
+                        {field.type==='checkbox' ? (d[field.k]?'✓ Yes':'—') : String(d[field.k])}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:'12px 20px', borderTop:'1px solid #eee', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <button onClick={() => buildDossierHTML(lead)} style={{ ...BTN, background:'#f5f5f5', color:N }}>🖨 Print Dossier</button>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={onEdit} style={{ ...BTN, background:T, color:'#fff' }}>Edit Lead</button>
+            <button onClick={onClose} style={{ ...BTN, background:'#f5f5f5', color:'#555' }}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ── Lead Form Modal ────────────────────────────────────────────────────────────
 const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
-  const [f, setF] = useState(lead ? { ...lead } : { ...EMPTY_LEAD, id: nextId(leads, 'L') });
+  const [f, setF] = useState(lead ? { stageData:{}, ...lead } : { ...EMPTY_LEAD, id: nextId(leads, 'L') });
+  const [formTab, setFormTab] = useState('profile');
   const isNew = !lead;
   const score = computeLeadScore(f);
   const cat   = getScoreCategory(score);
@@ -134,7 +646,22 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
           <span style={{ fontSize:11, fontWeight:800, color:cat.color, background:cat.bg, borderRadius:4, padding:'2px 8px', flexShrink:0 }}>{cat.label}</span>
         </div>
 
-        {/* Form */}
+        {/* Modal tab bar */}
+        <div style={{ display:'flex', gap:2, padding:'0 20px', background:'#f8f9fa', borderBottom:'1px solid #eee' }}>
+          {[{id:'profile',label:'Profile'},{id:'dossier',label:'📋 Stage Dossier'}].map(t=>(
+            <button key={t.id} onClick={()=>setFormTab(t.id)}
+              style={{ padding:'8px 16px', background:'transparent', border:'none',
+                borderBottom: formTab===t.id ? `2px solid ${G}` : '2px solid transparent',
+                color: formTab===t.id ? G : '#888', fontSize:12, fontWeight:700,
+                cursor:'pointer', fontFamily:'inherit', letterSpacing:'.3px',
+                textTransform:'uppercase', marginBottom:-1 }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Profile Form */}
+        {formTab === 'profile' && (
         <div style={{ padding:20, display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
           <SectionHead title="Organization" />
           <Field label="Organization Name" k="orgName" full />
@@ -185,6 +712,8 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
           <SectionHead title="Notes" />
           <Field label="Notes" k="notes" rows={4} full />
         </div>
+        )}
+        {formTab === 'dossier' && <DossierTab f={f} setF={setF} />}
 
         {/* Footer */}
         <div style={{ padding:'14px 20px', borderTop:'1px solid #eee', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -432,6 +961,13 @@ const CRMDashboard = ({ leads, tenders, pmAlerts, onClearAlert }) => {
                 <div>
                   <div style={{ fontSize:13, fontWeight:900, color:cfg.color, marginBottom:4 }}>{cfg.icon} {cfg.title.replace('[Lead]', alert.leadName)}</div>
                   <div style={{ fontSize:12, color:'#555', lineHeight:1.5 }}><b>{alert.leadName}</b> — {cfg.action}</div>
+                  {alert.stage === 'won' && (
+                    <div style={{ fontSize:11, fontWeight:700, marginTop:6, color: alert.projectCreated ? GR : AM }}>
+                      {alert.projectCreated
+                        ? '✓ Project automatically created in Projects tab with 30/30/30/10 milestones'
+                        : '⚠ Project already exists in Projects tab — not duplicated'}
+                    </div>
+                  )}
                 </div>
                 <button onClick={()=>onClearAlert(i)} style={{ ...BTN, background:'transparent', color:'#999', fontSize:16, padding:'2px 8px', flexShrink:0 }}>×</button>
               </div>
@@ -508,7 +1044,7 @@ const CRMDashboard = ({ leads, tenders, pmAlerts, onClearAlert }) => {
 };
 
 // ── LEAD TABLE SECTION ─────────────────────────────────────────────────────────
-const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport }) => {
+const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport, onDossier }) => {
   const [search, setSearch] = useState('');
   const [seg, setSeg]       = useState('All');
   const [stg, setStg]       = useState('All');
@@ -608,7 +1144,10 @@ const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport }) => {
                     {l.nextFollowUp ? (over ? `${Math.abs(days)}d overdue` : days===0 ? 'Today' : `${days}d`) : '—'}
                   </td>
                   <td style={{ padding:'10px 10px' }}>
-                    <button onClick={()=>onEdit(l)} style={{ ...BTN, background:T, color:'#fff', padding:'5px 10px', fontSize:11 }}>Edit</button>
+                    <div style={{ display:'flex', gap:4 }}>
+                      <button onClick={()=>onDossier(l)} style={{ ...BTN, background:'#e8f8f9', color:T, padding:'5px 8px', fontSize:11 }} title="View Dossier">📋</button>
+                      <button onClick={()=>onEdit(l)} style={{ ...BTN, background:T, color:'#fff', padding:'5px 10px', fontSize:11 }}>Edit</button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -621,7 +1160,7 @@ const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport }) => {
 };
 
 // ── PIPELINE KANBAN SECTION ────────────────────────────────────────────────────
-const CRMKanban = ({ leads, onEdit, onStageChange }) => {
+const CRMKanban = ({ leads, onEdit, onStageChange, onDossier }) => {
   const [filter, setFilter] = useState('All');
   const filteredLeads = filter === 'All' ? leads : leads.filter(l => l.segment === filter);
 
@@ -678,6 +1217,7 @@ const CRMKanban = ({ leads, onEdit, onStageChange }) => {
                         {over && <div style={{ fontSize:9, fontWeight:800, color:R, marginBottom:4 }}>⚠ {Math.abs(days||0)}d overdue</div>}
                         {!over && l.nextFollowUp && <div style={{ fontSize:9, color:'#aaa', marginBottom:4 }}>Follow-up: {days===0?'Today':`${days}d`}</div>}
                         <div style={{ display:'flex', gap:4, marginTop:6 }}>
+                          <button onClick={()=>onDossier(l)} style={{ ...BTN, padding:'3px 6px', fontSize:9, background:'#e8f8f9', color:T }} title="Dossier">📋</button>
                           <button onClick={()=>onEdit(l)} style={{ ...BTN, padding:'3px 8px', fontSize:9, background:'#f0f2f5', color:N, flex:1 }}>Edit</button>
                           {!isTerminal && nextStage && <button onClick={()=>onStageChange(l.id, nextStage.id, l.orgName)} style={{ ...BTN, padding:'3px 8px', fontSize:9, background:T, color:'#fff' }}>→</button>}
                         </div>
@@ -822,6 +1362,237 @@ const ResearchQueue = ({ items, onEdit, onAdd }) => {
   );
 };
 
+// ── SALES VELOCITY SECTION ────────────────────────────────────────────────────
+const VelocityTab = ({ leads }) => {
+  const won    = leads.filter(l => l.stage === 'won');
+  const lost   = leads.filter(l => l.stage === 'lost');
+  const active = leads.filter(l => !['won', 'lost', 'nurture'].includes(l.stage));
+  const hot    = leads.filter(l => l.temperature === 'Hot' && !['won','lost'].includes(l.stage));
+  const negot  = leads.filter(l => l.stage === 'negotiation');
+  const overdue = leads.filter(l => isOverdue(l.nextFollowUp) && !['won','lost'].includes(l.stage));
+
+  const winRate = (won.length + lost.length) > 0
+    ? Math.round(won.length / (won.length + lost.length) * 100) : null;
+
+  const avgWonDeal = won.length > 0
+    ? Math.round(won.reduce((s, l) => s + (parseFloat(l.dealValue) || 0), 0) / won.length) : 0;
+
+  const weightedPipe = active.reduce((s, l) =>
+    s + (parseFloat(l.dealValue) || 0) * stageProb(l.stage) / 100, 0);
+
+  const totalPipe = active.reduce((s, l) =>
+    s + (parseFloat(l.dealValue) || 0), 0);
+
+  // Conversion funnel: what % of leads ever reached each stage or beyond
+  const funnelOrder = ['contacted', 'qualified', 'site_visit_scheduled', 'site_visit_completed', 'feasibility_proposed', 'feasibility_sold', 'proposal_sent', 'negotiation', 'won'];
+  const totalLeads = leads.filter(l => l.stage !== 'nurture').length;
+
+  const funnelData = funnelOrder.map(stageId => {
+    const stageIdx = PIPELINE_STAGES.findIndex(s => s.id === stageId);
+    const countAtOrBeyond = leads.filter(l => {
+      const lIdx = PIPELINE_STAGES.findIndex(s => s.id === l.stage);
+      return lIdx >= stageIdx;
+    }).length;
+    return {
+      stageId,
+      label: stageById[stageId]?.label || stageId,
+      count: countAtOrBeyond,
+      pct: totalLeads > 0 ? Math.round(countAtOrBeyond / totalLeads * 100) : 0,
+    };
+  });
+
+  // Top close targets: hot or negotiation leads with highest deal value
+  const closeCandidates = [...leads]
+    .filter(l => ['negotiation', 'proposal_sent', 'feasibility_delivered'].includes(l.stage))
+    .sort((a, b) => (parseFloat(b.dealValue) || 0) - (parseFloat(a.dealValue) || 0))
+    .slice(0, 5);
+
+  // Pipeline health score (0–100)
+  const healthFactors = [
+    { label: 'Hot leads present',    score: hot.length >= 1 ? 20 : 0,    max: 20 },
+    { label: 'No overdue follow-ups', score: overdue.length === 0 ? 20 : Math.max(0, 20 - overdue.length * 4), max: 20 },
+    { label: 'Active proposals out', score: negot.length >= 1 ? 20 : leads.filter(l => l.stage === 'proposal_sent').length >= 1 ? 10 : 0, max: 20 },
+    { label: 'Pipeline size (leads)', score: Math.min(20, active.length * 2), max: 20 },
+    { label: 'Weighted value',        score: Math.min(20, Math.floor(weightedPipe / 50000)), max: 20 },
+  ];
+  const healthScore = healthFactors.reduce((s, f) => s + f.score, 0);
+  const healthColor = healthScore >= 70 ? GR : healthScore >= 40 ? AM : R;
+
+  // Loss analysis data
+  const lossWithData = lost.filter(l => l.stageData?.lost);
+  const lossReasons = {}; const lossComps = {}; const lossLessons = [];
+  lossWithData.forEach(l => {
+    const d = l.stageData.lost;
+    if (d.lossReason)     lossReasons[d.lossReason]    = (lossReasons[d.lossReason]||0) + 1;
+    if (d.competitorName) lossComps[d.competitorName]  = (lossComps[d.competitorName]||0) + 1;
+    if (d.lessonsLearned) lossLessons.push({ org: l.orgName, lesson: d.lessonsLearned });
+  });
+  const maxReasonCnt      = Math.max(...Object.values(lossReasons), 1);
+  const sortedLossReasons = Object.entries(lossReasons).sort((a,b) => b[1]-a[1]);
+  const sortedLossComps   = Object.entries(lossComps).sort((a,b) => b[1]-a[1]);
+
+  return (
+    <div>
+      {/* KPI strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 20 }}>
+        {[
+          { label: 'Win Rate', value: winRate !== null ? `${winRate}%` : 'No data', color: winRate >= 30 ? GR : winRate !== null ? AM : '#888', sub: `${won.length} won / ${lost.length} lost` },
+          { label: 'Avg Won Deal', value: avgWonDeal ? fmtEGP(avgWonDeal) : '—', color: N, sub: `from ${won.length} closed deals` },
+          { label: 'Weighted Pipeline', value: fmtEGP(weightedPipe), color: T, sub: 'probability-adjusted' },
+          { label: 'Total Active Value', value: fmtEGP(totalPipe), color: N, sub: `${active.length} active leads` },
+          { label: 'Pipeline Health', value: `${healthScore}/100`, color: healthColor, sub: healthScore >= 70 ? 'Healthy' : healthScore >= 40 ? 'Needs attention' : 'At risk' },
+        ].map(m => (
+          <div key={m.label} style={{ ...CARD, padding: '14px 16px', borderTop: `3px solid ${m.color}` }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 6 }}>{m.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: m.color, lineHeight: 1 }}>{m.value}</div>
+            {m.sub && <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{m.sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>
+
+        {/* Funnel */}
+        <div style={{ ...CARD, padding: 16 }}>
+          <div style={{ ...SL, marginBottom: 12 }}>Conversion Funnel</div>
+          {funnelData.map((row, i) => (
+            <div key={row.stageId} style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                <span style={{ color: '#555', fontWeight: row.stageId === 'won' ? 700 : 400 }}>{row.label}</span>
+                <span style={{ fontWeight: 700, color: row.count > 0 ? T : '#ccc' }}>{row.count} ({row.pct}%)</span>
+              </div>
+              <div style={{ background: '#eee', borderRadius: 3, height: 8, overflow: 'hidden' }}>
+                <div style={{ width: `${row.pct}%`, height: '100%', background: row.stageId === 'won' ? GR : T, transition: 'width .3s', opacity: 0.7 + (i / funnelOrder.length) * 0.3 }} />
+              </div>
+            </div>
+          ))}
+          <div style={{ marginTop: 10, fontSize: 10, color: '#888' }}>Reads as: "X% of all leads reached this stage or higher"</div>
+        </div>
+
+        {/* Pipeline health breakdown */}
+        <div style={{ ...CARD, padding: 16 }}>
+          <div style={{ ...SL, marginBottom: 12 }}>Pipeline Health Score</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 36, fontWeight: 900, color: healthColor }}>{healthScore}</div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: healthColor }}>{healthScore >= 70 ? 'Healthy' : healthScore >= 40 ? 'Needs Attention' : 'At Risk'}</div>
+              <div style={{ background: '#eee', borderRadius: 4, height: 8, width: 120, overflow: 'hidden', marginTop: 4 }}>
+                <div style={{ width: `${healthScore}%`, height: '100%', background: healthColor, transition: 'width .4s' }} />
+              </div>
+            </div>
+          </div>
+          {healthFactors.map(f => (
+            <div key={f.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+              <span style={{ fontSize: 11, color: '#555' }}>{f.label}</span>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {[...Array(f.max / 5)].map((_, i) => (
+                  <div key={i} style={{ width: 8, height: 8, borderRadius: 2, background: i < f.score / 5 ? healthColor : '#eee' }} />
+                ))}
+                <span style={{ fontSize: 10, color: f.score === f.max ? GR : '#aaa', fontWeight: 700, marginLeft: 4 }}>{f.score}/{f.max}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Close candidates */}
+        <div style={{ ...CARD, padding: 16 }}>
+          <div style={{ ...SL, marginBottom: 12 }}>Top Close Targets</div>
+          {closeCandidates.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#bbb', textAlign: 'center', padding: 20 }}>No proposals or negotiations in progress.</div>
+          ) : (
+            closeCandidates.map((l, i) => {
+              const over = isOverdue(l.nextFollowUp);
+              const days = daysUntil(l.nextFollowUp);
+              return (
+                <div key={l.id} style={{ padding: '9px 0', borderBottom: i < closeCandidates.length - 1 ? '1px solid #f5f5f5' : 'none' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: N }}>{l.orgName}</div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                        <StagePill stageId={l.stage} />
+                        {' '}
+                        {l.temperature === 'Hot' && <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: R, borderRadius: 3, padding: '1px 5px' }}>HOT</span>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 12, fontWeight: 900, color: T }}>{l.dealValue ? fmtEGP(l.dealValue) : '—'}</div>
+                      {l.nextFollowUp && (
+                        <div style={{ fontSize: 10, color: over ? R : '#aaa', marginTop: 2 }}>
+                          {over ? `${Math.abs(days || 0)}d overdue` : days === 0 ? 'Today' : `${days}d`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+      </div>
+
+      {/* Loss Analysis */}
+      {lost.length > 0 && (
+        <div style={{ ...CARD, padding:16, marginTop:16 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <div style={{ ...SL }}>Loss Analysis</div>
+            <span style={{ fontSize:11, color:'#888' }}>
+              {lossWithData.length > 0 ? `${lossWithData.length} of ${lost.length} deals have dossier data` : `${lost.length} deal${lost.length!==1?'s':''} lost — fill in Stage Dossier → Deal Lost to see patterns`}
+            </span>
+          </div>
+          {lossWithData.length === 0 ? (
+            <div style={{ fontSize:11, color:'#bbb', textAlign:'center', padding:'12px 0' }}>
+              Open a lost lead → Stage Dossier tab → Deal Lost section to log loss reasons, competitor names, and lessons.
+            </div>
+          ) : (
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:16 }}>
+              {sortedLossReasons.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Loss Reasons</div>
+                  {sortedLossReasons.map(([reason, count]) => (
+                    <div key={reason} style={{ marginBottom:7 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, marginBottom:2 }}>
+                        <span style={{ color:'#555' }}>{reason}</span>
+                        <span style={{ fontWeight:700, color:R }}>{count}</span>
+                      </div>
+                      <div style={{ background:'#f5f5f5', borderRadius:3, height:6 }}>
+                        <div style={{ width:`${count/maxReasonCnt*100}%`, height:'100%', background:R, borderRadius:3 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {sortedLossComps.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Competitors Encountered</div>
+                  {sortedLossComps.map(([name, count], i) => (
+                    <div key={name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'5px 0', borderBottom:i<sortedLossComps.length-1?'1px solid #f5f5f5':'none' }}>
+                      <span style={{ fontSize:11, color:'#555' }}>{name}</span>
+                      <span style={{ fontSize:11, fontWeight:900, color:R, background:'#fff5f5', borderRadius:3, padding:'1px 8px' }}>{count}×</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lossLessons.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Lessons Learned</div>
+                  {lossLessons.slice(0,4).map((item, i) => (
+                    <div key={i} style={{ padding:'6px 0', borderBottom:i<Math.min(lossLessons.length,4)-1?'1px solid #f5f5f5':'none' }}>
+                      <div style={{ fontSize:9, color:'#aaa', fontWeight:700, textTransform:'uppercase', letterSpacing:'.4px', marginBottom:2 }}>{item.org}</div>
+                      <div style={{ fontSize:11, color:'#555', lineHeight:1.4 }}>{item.lesson.slice(0,120)}{item.lesson.length>120?'…':''}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+    </div>
+  );
+};
+
 // ── SCORE GUIDE SECTION ────────────────────────────────────────────────────────
 const ScoreGuide = () => (
   <div>
@@ -894,13 +1665,17 @@ const ScoreGuide = () => (
 
 // ── MAIN CRM VIEW ──────────────────────────────────────────────────────────────
 export const CRMView = () => {
-  const [leads,    setLeads]    = useState(() => loadLS(LS.leads,    INIT_LEADS));
+  const [leads,    setLeads]    = useState(() => {
+    const raw = loadLS(LS.leads, INIT_LEADS);
+    return raw.map(l => ({ stageData:{}, ...l }));
+  });
   const [tenders,  setTenders]  = useState(() => loadLS(LS.tenders,  INIT_TENDERS));
   const [research, setResearch] = useState(() => loadLS(LS.research, INIT_RESEARCH));
   const [subTab,   setSubTab]   = useState('dashboard');
   const [leadModal,    setLeadModal]    = useState(null); // null | 'new' | lead object
   const [tenderModal,  setTenderModal]  = useState(null);
   const [researchModal,setResearchModal]= useState(null);
+  const [dossierLead,  setDossierLead]  = useState(null);
   const [pmAlerts, setPmAlerts] = useState([]);
 
   const syncLeads   = (next) => { setLeads(next);   saveLS(LS.leads,   next); };
@@ -908,16 +1683,28 @@ export const CRMView = () => {
   const syncResearch= (next) => { setResearch(next);saveLS(LS.research,next); };
 
   const saveLead = (f) => {
+    const oldLead = leads.find(l => l.id === f.id);
     const next = leads.some(l=>l.id===f.id) ? leads.map(l=>l.id===f.id?f:l) : [...leads, f];
-    syncLeads(next); setLeadModal(null);
+    syncLeads(next);
+    if (f.stage === 'won' && (!oldLead || oldLead.stage !== 'won')) {
+      const created = autoCreateProject(f);
+      setPmAlerts(prev => [...prev, { stage:'won', leadName: f.orgName, projectCreated: created }]);
+    }
+    setLeadModal(null);
   };
 
   const deleteLead = (id) => { syncLeads(leads.filter(l=>l.id!==id)); setLeadModal(null); };
 
   const handleStageChange = (leadId, newStage, leadName) => {
+    const oldLead = leads.find(l => l.id === leadId);
     const next = leads.map(l => l.id===leadId ? { ...l, stage:newStage, probability:String(stageProb(newStage)) } : l);
     syncLeads(next);
-    if (PM_TRIGGERS[newStage]) setPmAlerts(prev => [...prev, { stage:newStage, leadName }]);
+    if (PM_TRIGGERS[newStage]) {
+      const wonLead = newStage === 'won' && (!oldLead || oldLead.stage !== 'won')
+        ? next.find(l => l.id === leadId) : null;
+      const projectCreated = wonLead ? autoCreateProject(wonLead) : false;
+      setPmAlerts(prev => [...prev, { stage:newStage, leadName, projectCreated }]);
+    }
   };
 
   const saveTender  = (f) => { const next = tenders.some(t=>t.id===f.id) ? tenders.map(t=>t.id===f.id?f:t) : [...tenders,f]; syncTenders(next); setTenderModal(null); };
@@ -939,6 +1726,7 @@ export const CRMView = () => {
     { id:'dashboard', label:'Dashboard' },
     { id:'leads',     label:'Lead Table' },
     { id:'pipeline',  label:'Pipeline' },
+    { id:'velocity',  label:'Velocity' },
     { id:'tenders',   label:'Tender Tracker' },
     { id:'research',  label:'Research Queue' },
     { id:'guide',     label:'Score & Stage Guide' },
@@ -973,11 +1761,12 @@ export const CRMView = () => {
         <CRMDashboard leads={leads} tenders={tenders} pmAlerts={pmAlerts} onClearAlert={i=>setPmAlerts(p=>p.filter((_,idx)=>idx!==i))} />
       )}
       {subTab === 'leads' && (
-        <LeadTable leads={leads} onEdit={setLeadModal} onAdd={()=>setLeadModal('new')} onExport={()=>exportLeadsCSV(leads)} onImport={handleImport} />
+        <LeadTable leads={leads} onEdit={setLeadModal} onAdd={()=>setLeadModal('new')} onExport={()=>exportLeadsCSV(leads)} onImport={handleImport} onDossier={setDossierLead} />
       )}
       {subTab === 'pipeline' && (
-        <CRMKanban leads={leads} onEdit={setLeadModal} onStageChange={handleStageChange} />
+        <CRMKanban leads={leads} onEdit={setLeadModal} onStageChange={handleStageChange} onDossier={setDossierLead} />
       )}
+      {subTab === 'velocity' && <VelocityTab leads={leads} />}
       {subTab === 'tenders' && (
         <TenderTracker tenders={tenders} onEdit={setTenderModal} onAdd={()=>setTenderModal('new')} />
       )}
@@ -1012,6 +1801,13 @@ export const CRMView = () => {
           onSave={saveResearch}
           onDelete={deleteResearch}
           onClose={()=>setResearchModal(null)}
+        />
+      )}
+      {dossierLead && (
+        <DossierModal
+          lead={dossierLead}
+          onClose={() => setDossierLead(null)}
+          onEdit={() => { setDossierLead(null); setLeadModal(dossierLead); }}
         />
       )}
     </div>

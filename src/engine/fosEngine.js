@@ -179,12 +179,15 @@ const CAPACITY = {
   technician:  { eng: 10, sales:  0, admin:  5 },
 };
 
-export const computeResourceStatus = (workload, headcount) => {
+export const computeResourceStatus = (workload, headcount, founderIsEngineer = false) => {
   const { numEngineers = 0, numTechnicians = 0 } = headcount;
 
+  const founderEngCap   = founderIsEngineer ? 30 : CAPACITY.founder.eng;
+  const founderSalesCap = founderIsEngineer ? 20 : CAPACITY.founder.sales;
+
   const available = {
-    eng:   CAPACITY.founder.eng   + numEngineers   * CAPACITY.engineer.eng   + numTechnicians * CAPACITY.technician.eng,
-    sales: CAPACITY.founder.sales,
+    eng:   founderEngCap   + numEngineers   * CAPACITY.engineer.eng   + numTechnicians * CAPACITY.technician.eng,
+    sales: founderSalesCap,
     admin: CAPACITY.founder.admin + numEngineers   * CAPACITY.engineer.admin + numTechnicians * CAPACITY.technician.admin,
   };
 
@@ -203,15 +206,15 @@ export const computeResourceStatus = (workload, headcount) => {
 // ── Hiring Decision Engine ─────────────────────────────────────────────────────
 
 export const computeHiringDecisions = (state) => {
-  const { day, headcount, cashProjection, crm, complianceState, strategy } = state;
+  const { day, headcount, cashProjection, crm, complianceState, strategy, founderIsEngineer = false } = state;
   const { numEngineers = 0 } = headcount;
   const decisions = [];
 
   const canAffordEngineer = cashProjection.cash >= (RECOVERY_FLOOR + 22000 * 6);
   const canAffordTech     = cashProjection.cash >= (RECOVERY_FLOOR + 12000 * 6);
 
-  // Engineer — critical from Day 1
-  if (numEngineers === 0) {
+  if (!founderIsEngineer && numEngineers === 0) {
+    // No engineer on team and founder is not one — critical blocker
     const urgency = day >= 30 ? 'critical' : day >= 14 ? 'high' : 'medium';
     const status  = urgency === 'critical' ? 'OVERDUE — HIRE NOW' : 'HIRE IMMEDIATELY';
     decisions.push({
@@ -226,7 +229,19 @@ export const computeHiringDecisions = (state) => {
       condition: 'Must verify: Syndicate membership (EGX #), PVsyst experience, Grid-tie commissioning history.',
       nreaRequired: true,
     });
-  } else if (crm.contractsSigned >= 1 && crm.siteVisitsComplete >= 5) {
+  } else if (founderIsEngineer && numEngineers === 0 && crm.contractsSigned >= 1) {
+    // Founder is the engineer — recommend hiring when execution load justifies it
+    decisions.push({
+      role: 'Senior Engineer (Grade B)',
+      status: canAffordEngineer ? 'PLAN HIRE — Month 3' : 'WAIT',
+      urgency: 'medium',
+      hire: canAffordEngineer,
+      salary: 'EGP 18,000–22,000/month',
+      reason: 'First contract in execution plus active pipeline will push engineering demand past your 30h/week capacity. Plan hire before Month 3 to avoid becoming the bottleneck.',
+      condition: 'Must verify: Syndicate membership (EGX #), PVsyst experience, Grid-tie commissioning history.',
+      nreaRequired: false,
+    });
+  } else if (numEngineers >= 1 && crm.contractsSigned >= 1 && crm.siteVisitsComplete >= 5) {
     decisions.push({
       role: 'Senior Engineer (2nd)',
       status: canAffordEngineer ? 'CONSIDER HIRING' : 'WAIT',
@@ -371,13 +386,16 @@ export const computeComplianceStatus = (s, day) => {
     blockingWhat: 'Cannot collect client deposits without business account',
   });
 
-  // Engineer hired
+  // Engineer requirement — satisfied by founder if they are a registered engineer
+  const engRequirementMet = s.founderIsEngineer || s.engineerHired;
   items.push({
     id: 'C-ENG',
-    label: 'Senior Engineer Hired (Syndicate Registered)',
-    status: s.engineerHired ? 'done' : day >= 21 ? 'critical' : 'warn',
-    detail: s.engineerHired ? 'Hired ✓' : `Target Day 21. Day ${day} now. NREA Bronze requires registered engineer.`,
-    blocking: !s.engineerHired,
+    label: 'Registered Engineer on Team (Syndicate Member)',
+    status: engRequirementMet ? 'done' : day >= 21 ? 'critical' : 'warn',
+    detail: engRequirementMet
+      ? (s.founderIsEngineer ? 'Founder is registered engineer (intermediate) ✓' : 'Engineer hired ✓')
+      : `Target Day 21. Day ${day} now. NREA Bronze requires a registered Syndicate engineer.`,
+    blocking: !engRequirementMet,
     blockingWhat: 'NREA application, feasibility studies, all technical work',
   });
 
@@ -547,7 +565,7 @@ export const computeBreakNext = (day, crm, cashProjection, compliance, mode) => 
 
 // ── Decision Engine (the most important output) ───────────────────────────────
 
-export const computePrimaryDecision = (day, crm, cashProjection, compliance, mode, headcount) => {
+export const computePrimaryDecision = (day, crm, cashProjection, compliance, mode, headcount, founderIsEngineer = false) => {
   const cash    = cashProjection.cash;
   const breach  = cashProjection.breachMonth;
 
@@ -611,8 +629,8 @@ export const computePrimaryDecision = (day, crm, cashProjection, compliance, mod
     ],
   };
 
-  // Priority 5: Engineer not hired past Day 21
-  if (headcount.numEngineers === 0 && day >= 21) return {
+  // Priority 5: Engineer not hired past Day 21 (skip if founder IS the engineer)
+  if (!founderIsEngineer && headcount.numEngineers === 0 && day >= 21) return {
     id: 'D-ENG21',
     urgency: 'high',
     category: 'HIRING',
@@ -767,13 +785,19 @@ export const computeTodayActions = (day, crm, compliance, mode, headcount) => {
 
 // ── Do-Not List ────────────────────────────────────────────────────────────────
 
-export const computeDoNotList = (day, crm, cashProjection, mode, headcount) => {
+export const computeDoNotList = (day, crm, cashProjection, mode, headcount, founderIsEngineer = false) => {
   const items = [];
 
-  if (mode !== 'normal' || headcount.numEngineers === 0) {
+  const addEngineerWarning = founderIsEngineer
+    ? mode !== 'normal'
+    : (mode !== 'normal' || headcount.numEngineers === 0);
+
+  if (addEngineerWarning) {
     items.push({
-      action: 'Hire a second engineer',
-      reason: 'You cannot afford the cost AND you don\'t have enough execution volume to justify it yet.',
+      action: founderIsEngineer ? 'Hire an additional engineer before your execution load demands it' : 'Hire a second engineer',
+      reason: founderIsEngineer
+        ? 'You are the engineering resource right now. Only hire additional engineers after the first contract is in execution and demand consistently exceeds 30h/week.'
+        : "You cannot afford the cost AND you don't have enough execution volume to justify it yet.",
     });
   }
 
@@ -814,19 +838,20 @@ export const computeDoNotList = (day, crm, cashProjection, mode, headcount) => {
 // ── MASTER COMPUTE FUNCTION ────────────────────────────────────────────────────
 
 export const computeFullState = (fosState, leads) => {
-  const day           = computeCompanyDay(fosState.startDate);
-  const crm           = computeCRMSummary(leads);
-  const workload      = computeWorkload(leads);
-  const resource      = computeResourceStatus(workload, fosState.headcount || {});
-  const cashProjection= computeCashProjection(fosState, crm);
-  const compliance    = computeComplianceStatus(fosState, day);
-  const mode          = computeMode(cashProjection, day, crm, compliance);
-  const companyState  = computeCompanyState(day, crm, cashProjection.cash);
-  const breakNext     = computeBreakNext(day, crm, cashProjection, compliance, mode);
-  const primaryDecision = computePrimaryDecision(day, crm, cashProjection, compliance, mode, fosState.headcount || {});
-  const todayActions  = computeTodayActions(day, crm, compliance, mode, fosState.headcount || {});
-  const doNotList     = computeDoNotList(day, crm, cashProjection, mode, fosState.headcount || {});
-  const hiring        = computeHiringDecisions({ day, headcount: fosState.headcount || {}, cashProjection, crm, complianceState: compliance, strategy: fosState.strategy || 'A' });
+  const day              = computeCompanyDay(fosState.startDate);
+  const founderIsEngineer = fosState.founderIsEngineer ?? false;
+  const crm              = computeCRMSummary(leads);
+  const workload         = computeWorkload(leads);
+  const resource         = computeResourceStatus(workload, fosState.headcount || {}, founderIsEngineer);
+  const cashProjection   = computeCashProjection(fosState, crm);
+  const compliance       = computeComplianceStatus(fosState, day);
+  const mode             = computeMode(cashProjection, day, crm, compliance);
+  const companyState     = computeCompanyState(day, crm, cashProjection.cash);
+  const breakNext        = computeBreakNext(day, crm, cashProjection, compliance, mode);
+  const primaryDecision  = computePrimaryDecision(day, crm, cashProjection, compliance, mode, fosState.headcount || {}, founderIsEngineer);
+  const todayActions     = computeTodayActions(day, crm, compliance, mode, fosState.headcount || {});
+  const doNotList        = computeDoNotList(day, crm, cashProjection, mode, fosState.headcount || {}, founderIsEngineer);
+  const hiring           = computeHiringDecisions({ day, headcount: fosState.headcount || {}, cashProjection, crm, complianceState: compliance, strategy: fosState.strategy || 'A', founderIsEngineer });
 
   return {
     day, crm, workload, resource, cashProjection,
@@ -846,6 +871,7 @@ export const INIT_FOS_STATE = {
   strategy:         'A',         // A | B | C
   cash:             2000000,
   monthlyBurn:      75000,
+  founderIsEngineer: true,       // founder holds Engineers' Syndicate membership + PV experience
   headcount: {
     numEngineers:   0,
     numTechnicians: 0,

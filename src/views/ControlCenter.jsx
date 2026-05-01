@@ -712,13 +712,13 @@ export const ControlCenter = () => {
       )}
 
       {/* ── ROW 1: Decision + Today's Actions ────────────────────────────────── */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,320px),1fr))', gap:14, marginBottom:14 }}>
         <DecisionCard decision={sys.primaryDecision} />
         <TodayActions actions={sys.todayActions} />
       </div>
 
       {/* ── ROW 2: Decisions Required + Break-Next + Cash ────────────────────── */}
-      <div style={{ display:'grid', gridTemplateColumns: hasDecisionsRequired ? '1fr 1fr 1fr' : '1fr 1fr', gap:14, marginBottom:14 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap:14, marginBottom:14 }}>
         {hasDecisionsRequired && (
           <DecisionsRequired hiring={sys.hiring} compliance={sys.compliance} mode={sys.mode} />
         )}
@@ -737,7 +737,7 @@ export const ControlCenter = () => {
       </Card>
 
       {/* ── ROW 5: Hiring (full detail) + Do-Not + Compliance ────────────────── */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14, marginBottom:14 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:14, marginBottom:14 }}>
         <HiringPanel hiring={sys.hiring} />
         <DoNotPanel items={sys.doNotList} />
         <CompliancePanel compliance={sys.compliance} />
