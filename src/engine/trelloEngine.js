@@ -333,13 +333,14 @@ export const migrateBoardLists = async (config) => {
   for (const list of currentLists) {
     if (TARGET_NAMES[list.id]) {
       await trelloRenameList(config, list.id, TARGET_NAMES[list.id]);
-    } else if (!mappedIds.has(list.id) && list.name !== '✅ Done') {
-      // Archive the time-based placeholder lists; leave any "Done/Completed" list
+    } else if (!mappedIds.has(list.id)) {
       const isCompletionList = /done|complet/i.test(list.name);
       if (isCompletionList) {
         await trelloRenameList(config, list.id, '✅ Done');
       } else {
-        await trelloArchiveList(config, list.id);
+        // Only archive if the list is empty — never destroy cards
+        const cards = await trelloReq('GET', `/lists/${list.id}/cards?fields=id`, null, config);
+        if (cards.length === 0) await trelloArchiveList(config, list.id);
       }
     }
   }
