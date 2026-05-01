@@ -264,9 +264,12 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     : [];
 
   // Merge pending with queue (tasks already pushed)
+  // Backfill assignees on tasks loaded from localStorage (created before this feature)
+  const withAssignees = (t) => t.assignees ? t : { ...t, assignees: getTaskAssignees(t) };
+
   const allTasks = [
-    ...pendingTasks,
-    ...taskQueue.filter(t => t.pushed && !pendingTasks.find(p => p.id === t.id)),
+    ...pendingTasks.map(withAssignees),
+    ...taskQueue.filter(t => t.pushed && !pendingTasks.find(p => p.id === t.id)).map(withAssignees),
   ];
 
   const visibleTasks = allTasks.filter(t => {
