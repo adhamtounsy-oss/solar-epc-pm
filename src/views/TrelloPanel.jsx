@@ -239,6 +239,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [syncMsg, setSyncMsg]     = useState('');
   const [copied, setCopied]       = useState(null);
   const [filter, setFilter]       = useState('pending'); // 'pending' | 'pushed' | 'all'
+  const [lastSynced, setLastSynced] = useState(null);
 
   const trelloReady = !!(
     config?.apiKey && config?.apiToken && config?.boardId &&
@@ -317,6 +318,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
       }
       setTaskQueue(updated);
       saveTaskQueue(updated);
+      setLastSynced(Date.now());
       setSyncMsg(count > 0 ? `${count} task${count>1?'s':''} marked completed from Trello.` : 'No new completions.');
     } catch (e) {
       setSyncMsg(`Sync failed: ${e.message}`);
@@ -324,6 +326,14 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
       setSyncing(false);
     }
   };
+
+  // Auto-sync every 2 minutes while the tab is visible
+  useEffect(() => {
+    if (!trelloReady) return;
+    const tick = () => { if (!document.hidden) handleSync(); };
+    const id = setInterval(tick, 2 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [trelloReady, handleSync]);
 
   const handleApplyFeedback = (completedTask, lead) => {
     if (completedTask.onComplete?.crmNextStage) {
@@ -377,7 +387,9 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
             <>
               <button onClick={handleSync} disabled={syncing}
                 style={{ ...BTN('#f5f5f5', C.navy), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
-                {syncing ? 'Syncing...' : '↻ Sync from Trello'}
+                {syncing ? 'Syncing...' : lastSynced
+                  ? `↻ Synced ${Math.round((Date.now() - lastSynced) / 60000) || '<1'} min ago`
+                  : '↻ Sync from Trello'}
               </button>
               {pendingCount > 0 && (
                 <button onClick={pushAll}
