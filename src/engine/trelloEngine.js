@@ -35,8 +35,8 @@ export const ROLE_LABELS = {
   ENGINEER:    { label:'Engineer',     trelloName:'→ Engineer',     color:'#1A6B72', trelloColor:'blue'         },
   SALES_REP:   { label:'Sales Rep',    trelloName:'→ Sales Rep',    color:'#1E7E34', trelloColor:'lime'         },
   ACCOUNTANT:  { label:'Accountant',   trelloName:'→ Accountant',   color:'#C0392B', trelloColor:'pink'         },
-  PROCUREMENT: { label:'Procurement',  trelloName:'→ Procurement',  color:'#5C2D91', trelloColor:'light-orange' },
-  TECHNICIAN:  { label:'Technician',   trelloName:'→ Technician',   color:'#555',    trelloColor:'light-blue'   },
+  PROCUREMENT: { label:'Procurement',  trelloName:'→ Procurement',  color:'#5C2D91', trelloColor:'orange' },
+  TECHNICIAN:  { label:'Technician',   trelloName:'→ Technician',   color:'#555',    trelloColor:'sky'    },
 };
 
 // ── Assignment logic ───────────────────────────────────────────────────────────
