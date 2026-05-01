@@ -465,12 +465,6 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
               )}
             </>
           )}
-          {config && (
-            <button onClick={() => { saveCfg(null); setConfig(null); }}
-              style={{ ...BTN('#f5f5f5', '#999'), border:'1px solid #ddd', fontSize:10, padding:'5px 10px' }}>
-              ×
-            </button>
-          )}
         </div>
       </div>
 
