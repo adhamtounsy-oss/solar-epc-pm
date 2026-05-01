@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   generateTasks, pushTask, ensureLabels, validateTrelloConnection,
-  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl, deduplicateBoardCards,
+  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl,
+  deduplicateBoardCards, migrateBoardLists,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS,
 } from '../engine/trelloEngine';
@@ -242,6 +243,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [lastSynced, setLastSynced]   = useState(null);
   const [boardUrl, setBoardUrl]       = useState(null);
   const [deduping, setDeduping]       = useState(false);
+  const [migrating, setMigrating]     = useState(false);
 
   const trelloReady = !!(
     config?.apiKey && config?.apiToken && config?.boardId &&
@@ -356,6 +358,22 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     }
   };
 
+  const handleMigrateLists = async () => {
+    if (!trelloReady) return;
+    setMigrating(true); setSyncMsg('');
+    try {
+      const { lists } = await migrateBoardLists(config);
+      const updated = { ...config, lists };
+      setConfig(updated);
+      saveCfg(updated);
+      setSyncMsg('Board lists renamed successfully.');
+    } catch (e) {
+      setSyncMsg(`Rename failed: ${e.message}`);
+    } finally {
+      setMigrating(false);
+    }
+  };
+
   const handleApplyFeedback = (completedTask, lead) => {
     if (completedTask.onComplete?.crmNextStage) {
       onCRMUpdate(lead.id, completedTask.onComplete.crmNextStage);
@@ -423,6 +441,10 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
               <button onClick={handleDedup} disabled={deduping}
                 style={{ ...BTN('#f5f5f5', '#c0392b'), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
                 {deduping ? 'Cleaning...' : '⊘ Clean Duplicates'}
+              </button>
+              <button onClick={handleMigrateLists} disabled={migrating}
+                style={{ ...BTN('#f5f5f5', '#5C2D91'), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
+                {migrating ? 'Renaming...' : '✎ Rename Lists'}
               </button>
               {pendingCount > 0 && (
                 <button onClick={pushAll}

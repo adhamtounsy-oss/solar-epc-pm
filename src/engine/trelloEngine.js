@@ -20,9 +20,9 @@ export const TASK_TYPES = {
 };
 
 export const LIST_TARGETS = {
-  'this-week':   { label:'This Week',   priority: 1 },
-  'in-progress': { label:'In Progress', priority: 0 },
-  'backlog':     { label:'Backlog',     priority: 2 },
+  'this-week':   { label:'This Week',   trelloName:'🔴 This Week',    priority: 1 },
+  'in-progress': { label:'In Execution', trelloName:'🔵 In Execution', priority: 0 },
+  'backlog':     { label:'Queued',       trelloName:'📋 Queued',        priority: 2 },
 };
 
 // ── Task schema factory ────────────────────────────────────────────────────────
@@ -310,8 +310,48 @@ export const trelloGetBoardLabels = (config) =>
 export const trelloGetBoardCards = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/cards?filter=all&fields=id,name,desc,idList,labels,dueComplete,closed`, null, config);
 
-const trelloArchiveCard = (config, cardId) =>
-  trelloReq('PUT', `/cards/${cardId}`, { closed: true }, config);
+const trelloArchiveCard  = (config, cardId)        => trelloReq('PUT',  `/cards/${cardId}`,         { closed: true }, config);
+const trelloRenameList   = (config, listId, name)   => trelloReq('PUT',  `/lists/${listId}`,          { name }, config);
+const trelloArchiveList  = (config, listId)          => trelloReq('PUT',  `/lists/${listId}/closed`,   { value: true }, config);
+const trelloCreateList   = (config, name, pos = 'bottom') =>
+  trelloReq('POST', `/boards/${config.boardId}/lists`, { name, pos }, config);
+
+// ── BOARD LIST MIGRATION ───────────────────────────────────────────────────────
+// Renames the 3 mapped lists to solar-EPC-relevant names, archives the 3
+// time-based placeholder lists, and adds a Blocked list for manual stalls.
+// Returns an updated { lists, listMapping } to merge into config.
+export const migrateBoardLists = async (config) => {
+  const TARGET_NAMES = {
+    [config.listMapping['this-week']]:   '🔴 This Week',
+    [config.listMapping['in-progress']]: '🔵 In Execution',
+    [config.listMapping['backlog']]:      '📋 Queued',
+  };
+
+  const mappedIds = new Set(Object.values(config.listMapping));
+  const currentLists = await trelloGetBoardLists(config);
+
+  for (const list of currentLists) {
+    if (TARGET_NAMES[list.id]) {
+      await trelloRenameList(config, list.id, TARGET_NAMES[list.id]);
+    } else if (!mappedIds.has(list.id) && list.name !== '✅ Done') {
+      // Archive the time-based placeholder lists; leave any "Done/Completed" list
+      const isCompletionList = /done|complet/i.test(list.name);
+      if (isCompletionList) {
+        await trelloRenameList(config, list.id, '✅ Done');
+      } else {
+        await trelloArchiveList(config, list.id);
+      }
+    }
+  }
+
+  // Add Blocked list if it doesn't already exist
+  const refreshed = await trelloGetBoardLists(config);
+  const hasBlocked = refreshed.some(l => l.name === '⛔ Blocked');
+  if (!hasBlocked) await trelloCreateList(config, '⛔ Blocked');
+
+  const finalLists = await trelloGetBoardLists(config);
+  return { lists: finalLists };
+};
 
 // Scans the board for duplicate cards (by fos marker, then by title as fallback),
 // archives all but the newest copy of each, and returns the count archived.
