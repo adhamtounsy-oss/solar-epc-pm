@@ -17,6 +17,23 @@ const COST_CATS = [
 ];
 const CAT_MAP = Object.fromEntries(COST_CATS.map(c => [c.id, c]));
 
+const PROCURE_CATS = [
+  { id: 'panels',    label: 'Solar Panels',   color: '#1A6B72' },
+  { id: 'inverters', label: 'Inverters',       color: '#0D2137' },
+  { id: 'mounting',  label: 'Mounting / BOS',  color: '#556678' },
+  { id: 'dc',        label: 'DC Wiring',       color: '#C8991A' },
+  { id: 'ac',        label: 'AC / MDB',        color: '#856404' },
+  { id: 'other',     label: 'Other',           color: '#888'    },
+];
+
+const IEC_STATUS = {
+  pending:  { label: 'Cert Pending',  color: '#888',    bg: '#f5f5f5' },
+  received: { label: 'Cert Received', color: '#1a7a3f', bg: '#f0faf4' },
+  missing:  { label: 'Cert Missing',  color: '#C0392B', bg: '#fff5f5' },
+};
+
+const PROJ_COMM_METHODS = ['Call', 'WhatsApp', 'Site Visit', 'Email', 'Meeting'];
+
 const MS_STATUS = {
   pending:  { label: 'Pending',  color: '#888',    bg: '#f5f5f5' },
   invoiced: { label: 'Invoiced', color: '#b8860b', bg: '#fffbee' },
@@ -53,10 +70,10 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const mkMilestones = (cv) => {
   const c = Number(cv) || 0;
   return [
-    { id: uid(), label: 'Contract Deposit (30%)',         pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending' },
-    { id: uid(), label: 'Equipment Delivery (30%)',       pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending' },
-    { id: uid(), label: 'Installation Complete (30%)',    pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending' },
-    { id: uid(), label: 'Commissioning & Handover (10%)', pct: 10, amount: Math.round(c * 0.10), dueDate: '', status: 'pending' },
+    { id: uid(), label: 'Contract Deposit (30%)',         pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending', invoicedDate: null },
+    { id: uid(), label: 'Equipment Delivery (30%)',       pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending', invoicedDate: null },
+    { id: uid(), label: 'Installation Complete (30%)',    pct: 30, amount: Math.round(c * 0.30), dueDate: '', status: 'pending', invoicedDate: null },
+    { id: uid(), label: 'Commissioning & Handover (10%)', pct: 10, amount: Math.round(c * 0.10), dueDate: '', status: 'pending', invoicedDate: null },
   ];
 };
 
@@ -72,6 +89,8 @@ const newProject = () => ({
   notes: '',
   milestones: [],
   costs: [],
+  procurement: [],
+  commsLog: [],
   linkedLeadId: null,
 });
 
@@ -294,6 +313,20 @@ function ProjectForm({ project, leads, onSave, onCancel }) {
 function MilestoneRow({ ms, onChange }) {
   const m    = MS_STATUS[ms.status];
   const next = { pending: 'invoiced', invoiced: 'received', received: 'pending' };
+
+  const daysOut = ms.status === 'invoiced' && ms.invoicedDate
+    ? Math.floor((Date.now() - new Date(ms.invoicedDate)) / 86400000)
+    : null;
+
+  const handleStatusClick = () => {
+    const newStatus = next[ms.status];
+    const updates = { ...ms, status: newStatus };
+    if (newStatus === 'invoiced' && !ms.invoicedDate) {
+      updates.invoicedDate = new Date().toISOString().split('T')[0];
+    }
+    onChange(updates);
+  };
+
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #f0f2f5', flexWrap: 'wrap' }}>
       <input style={{ ...inp, flex: '1 1 160px', minWidth: 100, fontSize: 11 }}
@@ -303,11 +336,19 @@ function MilestoneRow({ ms, onChange }) {
       <input type="date" style={{ ...inp, width: 135, fontSize: 11 }}
         value={ms.dueDate} onChange={e => onChange({ ...ms, dueDate: e.target.value })} />
       <button
-        onClick={() => onChange({ ...ms, status: next[ms.status] })}
+        onClick={handleStatusClick}
         style={{ padding: '4px 10px', borderRadius: 8, fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, border: `1px solid ${m.color}40`, cursor: 'pointer', whiteSpace: 'nowrap' }}
       >
         {m.label}
       </button>
+      {daysOut !== null && (
+        <span style={{ fontSize: 9, fontWeight: 700,
+          color: daysOut >= 30 ? '#C0392B' : daysOut >= 14 ? '#856404' : '#888',
+          background: daysOut >= 30 ? '#fff5f5' : daysOut >= 14 ? '#fff3cd' : '#f5f5f5',
+          borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+          {daysOut}d outstanding
+        </span>
+      )}
     </div>
   );
 }
@@ -332,6 +373,122 @@ function CostRow({ cost, onChange, onDelete }) {
         Paid
       </label>
       <button onClick={onDelete} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#ddd', padding: '0 2px', flex: '0 0 auto' }}>×</button>
+    </div>
+  );
+}
+
+// ── Procurement row ────────────────────────────────────────────────────────────
+
+function ProcurementRow({ item, onChange, onDelete }) {
+  const ic = IEC_STATUS[item.iecCertStatus] || IEC_STATUS.pending;
+  const isOverdue = item.expectedDeliveryDate && item.expectedDeliveryDate < new Date().toISOString().split('T')[0];
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f5f5f5', flexWrap: 'wrap' }}>
+      <select style={{ ...inp, width: 120, fontSize: 11, flex: '0 0 auto' }}
+        value={item.category} onChange={e => onChange({ ...item, category: e.target.value })}>
+        {PROCURE_CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+      </select>
+      <input style={{ ...inp, flex: '1 1 110px', minWidth: 80, fontSize: 11 }}
+        value={item.supplier} onChange={e => onChange({ ...item, supplier: e.target.value })} placeholder="Supplier" />
+      <input type="number" style={{ ...inp, width: 100, fontSize: 11, textAlign: 'right', flex: '0 0 auto' }}
+        value={item.quotedPriceEGP} onChange={e => onChange({ ...item, quotedPriceEGP: e.target.value })} placeholder="EGP" />
+      <input style={{ ...inp, flex: '0 1 100px', fontSize: 11 }}
+        value={item.orderConfirmNumber} onChange={e => onChange({ ...item, orderConfirmNumber: e.target.value })} placeholder="Order #" />
+      <input type="date" style={{ ...inp, width: 130, fontSize: 11,
+        color: isOverdue ? '#C0392B' : undefined, fontWeight: isOverdue ? 700 : undefined }}
+        value={item.expectedDeliveryDate} onChange={e => onChange({ ...item, expectedDeliveryDate: e.target.value })} />
+      <button
+        onClick={() => {
+          const cycle = { pending: 'received', received: 'missing', missing: 'pending' };
+          onChange({ ...item, iecCertStatus: cycle[item.iecCertStatus] || 'pending' });
+        }}
+        style={{ padding: '3px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700,
+          color: ic.color, background: ic.bg, border: `1px solid ${ic.color}40`,
+          cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+        {ic.label}
+      </button>
+      <button onClick={onDelete} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#ddd', padding: '0 2px', flex: '0 0 auto' }}>×</button>
+    </div>
+  );
+}
+
+// ── Project comms tab ──────────────────────────────────────────────────────────
+
+function ProjectCommsTab({ project, onChange }) {
+  const emptyEntry = { date: '', method: 'Call', summary: '', nextAction: '' };
+  const [form, setForm]     = useState(emptyEntry);
+  const [showForm, setShowForm] = useState(false);
+
+  const commsLog = project.commsLog || [];
+
+  const addEntry = () => {
+    if (!form.date || !form.summary) return;
+    onChange({ ...project, commsLog: [...commsLog, { ...form, id: `comm-${Date.now()}` }] });
+    setForm(emptyEntry);
+    setShowForm(false);
+  };
+
+  const deleteEntry = (id) => onChange({ ...project, commsLog: commsLog.filter(e => e.id !== id) });
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 10, color: '#aaa' }}>Log every client touchpoint — calls, site visits, WhatsApp exchanges.</div>
+        <button onClick={() => setShowForm(v => !v)} style={btnS()}>+ Log</button>
+      </div>
+
+      {showForm && (
+        <div style={{ background: '#fffbee', border: '1px solid #ffe082', borderRadius: 6, padding: 12, marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div>
+              <label style={lbl}>Date <span style={{ color: '#C0392B' }}>*</span></label>
+              <input type="date" style={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+            </div>
+            <div>
+              <label style={lbl}>Method</label>
+              <select style={inp} value={form.method} onChange={e => setForm(f => ({ ...f, method: e.target.value }))}>
+                {PROJ_COMM_METHODS.map(m => <option key={m}>{m}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label style={lbl}>Summary <span style={{ color: '#C0392B' }}>*</span></label>
+            <textarea rows={2} style={{ ...inp, resize: 'vertical' }}
+              value={form.summary} onChange={e => setForm(f => ({ ...f, summary: e.target.value }))}
+              placeholder="What was discussed or decided?" />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={lbl}>Next Action</label>
+            <input style={inp} value={form.nextAction} onChange={e => setForm(f => ({ ...f, nextAction: e.target.value }))}
+              placeholder="e.g. Send installation schedule by Thursday" />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={addEntry} style={btnS(GR)}>Save</button>
+            <button onClick={() => { setShowForm(false); setForm(emptyEntry); }} style={btnS('#f5f5f5', '#555')}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {commsLog.length === 0 ? (
+        <div style={{ fontSize: 11, color: '#bbb', padding: '12px 0' }}>No communication logged yet.</div>
+      ) : (
+        [...commsLog].reverse().map(entry => (
+          <div key={entry.id} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: N }}>{entry.date}</span>
+              <span style={{ padding: '1px 7px', borderRadius: 8, fontSize: 10, fontWeight: 700, background: '#e8f4fd', color: '#1565c0' }}>
+                {entry.method}
+              </span>
+              <span style={{ flex: 1, fontSize: 12, color: '#333' }}>{entry.summary}</span>
+              <button onClick={() => deleteEntry(entry.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#ccc', padding: 0 }}>×</button>
+            </div>
+            {entry.nextAction && (
+              <div style={{ fontSize: 10, color: '#b8860b' }}>→ {entry.nextAction}</div>
+            )}
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -558,11 +715,22 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
   const margin        = totalReceived - totalCostPaid;
   const marginPct     = totalContract > 0 ? Math.round(margin / totalContract * 100) : 0;
 
-  const updateMilestone = (id, u) => onChange({ ...project, milestones: project.milestones.map(m => m.id === id ? u : m) });
-  const addMilestone    = () => onChange({ ...project, milestones: [...project.milestones, { id: uid(), label: 'New Milestone', pct: 0, amount: 0, dueDate: '', status: 'pending' }] });
-  const updateCost      = (id, u) => onChange({ ...project, costs: project.costs.map(c => c.id === id ? u : c) });
-  const addCost         = () => onChange({ ...project, costs: [...project.costs, { id: uid(), category: 'panels', description: '', vendor: '', amount: '', paid: false }] });
-  const deleteCost      = (id) => onChange({ ...project, costs: project.costs.filter(c => c.id !== id) });
+  const invoicedMs    = project.milestones.filter(m => m.status === 'invoiced');
+  const totalInvoiced = invoicedMs.reduce((s, m) => s + (Number(m.amount) || 0), 0);
+  const overdueMs     = invoicedMs.filter(m => m.invoicedDate &&
+    Math.floor((Date.now() - new Date(m.invoicedDate)) / 86400000) >= 14);
+  const overdueARTotal= overdueMs.reduce((s, m) => s + (Number(m.amount) || 0), 0);
+
+  const procurement   = project.procurement || [];
+
+  const updateMilestone  = (id, u) => onChange({ ...project, milestones: project.milestones.map(m => m.id === id ? u : m) });
+  const addMilestone     = () => onChange({ ...project, milestones: [...project.milestones, { id: uid(), label: 'New Milestone', pct: 0, amount: 0, dueDate: '', status: 'pending', invoicedDate: null }] });
+  const updateCost       = (id, u) => onChange({ ...project, costs: project.costs.map(c => c.id === id ? u : c) });
+  const addCost          = () => onChange({ ...project, costs: [...project.costs, { id: uid(), category: 'panels', description: '', vendor: '', amount: '', paid: false }] });
+  const deleteCost       = (id) => onChange({ ...project, costs: project.costs.filter(c => c.id !== id) });
+  const updateProcurement= (id, u) => onChange({ ...project, procurement: procurement.map(i => i.id === id ? u : i) });
+  const addProcurement   = () => onChange({ ...project, procurement: [...procurement, { id: uid(), category: 'panels', supplier: '', quotedPriceEGP: '', orderConfirmNumber: '', expectedDeliveryDate: '', iecCertStatus: 'pending' }] });
+  const deleteProcurement= (id) => onChange({ ...project, procurement: procurement.filter(i => i.id !== id) });
 
   const catBreakdown = COST_CATS.map(cat => ({
     ...cat,
@@ -580,13 +748,14 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
     <div style={{ paddingTop: 14, borderTop: '1px solid #eee' }}>
 
       {/* Financial strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(105px,1fr))', gap: 8, marginBottom: 14 }}>
         {[
           { label: 'Contract',     value: fmtEGP(totalContract), color: N },
           { label: 'Received',     value: fmtEGP(totalReceived), color: GR },
+          { label: 'Invoiced',     value: fmtEGP(totalInvoiced), color: '#1A6B72' },
           { label: 'Costs (paid)', value: fmtEGP(totalCostPaid), color: '#856404' },
-          { label: 'Committed',    value: fmtEGP(totalCostAll),  color: '#888' },
           { label: `Margin (${marginPct}%)`, value: fmtEGP(margin), color: margin >= 0 ? GR : '#C0392B' },
+          ...(overdueARTotal > 0 ? [{ label: `AR Overdue (${overdueMs.length})`, value: fmtEGP(overdueARTotal), color: '#C0392B' }] : []),
         ].map(t => (
           <div key={t.label} style={{ background: '#f8f9fa', borderRadius: 6, padding: '8px 10px', borderBottom: `2px solid ${t.color}` }}>
             <div style={{ fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 3 }}>{t.label}</div>
@@ -600,6 +769,8 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
         {linkedLead && secBtn('lead', `Lead: ${linkedLead.orgName}`)}
         {secBtn('milestones', `Milestones (${project.milestones.length})`)}
         {secBtn('costs', `Costs (${project.costs.length})`)}
+        {secBtn('procurement', `Procurement (${procurement.length})`)}
+        {secBtn('comms', `Comms (${(project.commsLog||[]).length})`)}
         {catBreakdown.length > 0 && secBtn('breakdown', 'Breakdown')}
       </div>
 
@@ -638,6 +809,47 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
           ))}
           <button onClick={addCost} style={{ ...btnS('#f0f2f5', '#555'), marginTop: 10 }}>+ Add Cost Item</button>
         </div>
+      )}
+
+      {/* Procurement */}
+      {tab === 'procurement' && (
+        <div>
+          <div style={{ fontSize: 10, color: '#aaa', marginBottom: 8 }}>
+            Track every equipment order. IEC certificates required for NREA compliance.
+            Click IEC badge to cycle: Pending → Received → Missing.
+          </div>
+          {procurement.length === 0 && (
+            <div style={{ fontSize: 11, color: '#bbb', padding: '12px 0' }}>No procurement items yet.</div>
+          )}
+          {(() => {
+            const missingCerts = procurement.filter(i => i.iecCertStatus === 'missing');
+            const overdueDeliveries = procurement.filter(i => i.expectedDeliveryDate && i.expectedDeliveryDate < new Date().toISOString().split('T')[0]);
+            const totalQuoted = procurement.reduce((s, i) => s + (Number(i.quotedPriceEGP) || 0), 0);
+            return (
+              <>
+                {(missingCerts.length > 0 || overdueDeliveries.length > 0) && (
+                  <div style={{ background: '#fff5f5', border: '1px solid #C0392B33', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: '#C0392B' }}>
+                    {missingCerts.length > 0 && <div>⚠ {missingCerts.length} item{missingCerts.length > 1 ? 's' : ''} missing IEC certificates — collect before commissioning</div>}
+                    {overdueDeliveries.length > 0 && <div>⚠ {overdueDeliveries.length} delivery overdue — chase supplier</div>}
+                  </div>
+                )}
+                <div style={{ fontSize: 10, color: '#888', marginBottom: 4, display: 'flex', gap: 12 }}>
+                  <span>Supplier · EGP · Order# · Expected · IEC Cert</span>
+                  {totalQuoted > 0 && <span style={{ marginLeft: 'auto', fontWeight: 700, color: N }}>Total quoted: {fmtEGP(totalQuoted)}</span>}
+                </div>
+              </>
+            );
+          })()}
+          {procurement.map(i => (
+            <ProcurementRow key={i.id} item={i} onChange={u => updateProcurement(i.id, u)} onDelete={() => deleteProcurement(i.id)} />
+          ))}
+          <button onClick={addProcurement} style={{ ...btnS('#f0f2f5', '#555'), marginTop: 10 }}>+ Add Item</button>
+        </div>
+      )}
+
+      {/* Comms */}
+      {tab === 'comms' && (
+        <ProjectCommsTab project={project} onChange={onChange} />
       )}
 
       {/* Breakdown */}

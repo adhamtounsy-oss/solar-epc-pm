@@ -411,6 +411,28 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     ));
   }
 
+  // ── AR aging: overdue invoice collection ──────────────────────────────────
+  // Fires a collection task when a milestone has been in 'invoiced' state for ≥14 days.
+  try {
+    const rawProj = localStorage.getItem('projects_v1');
+    const allProjs = rawProj ? JSON.parse(rawProj) : [];
+    for (const proj of allProjs) {
+      for (const ms of (proj.milestones || [])) {
+        if (ms.status !== 'invoiced' || !ms.invoicedDate) continue;
+        const daysOut = Math.floor((Date.now() - new Date(ms.invoicedDate)) / 86400000);
+        if (daysOut < 14) continue;
+        const clientName = proj.clientName || proj.name;
+        add(task(
+          `ar-aging-${proj.id}-${ms.id}`,
+          `Collect payment — ${clientName} [${daysOut}d outstanding]`,
+          `Invoice overdue ${daysOut} days.\nProject: ${proj.name}\nMilestone: ${ms.label}\nAmount: EGP ${Number(ms.amount).toLocaleString()}\nInvoiced: ${ms.invoicedDate}\n${daysOut >= 30 ? '⚠ ESCALATE: >30 days. Formal demand letter required.' : 'Action: Call client, follow up by WhatsApp, confirm receipt of invoice.'}`,
+          'EXECUTION', daysOut >= 30 ? 'critical' : 'high',
+          'this-week', 0, 'crm', proj.id, {}
+        ));
+      }
+    }
+  } catch {}
+
   // ── 3. Hiring-driven tasks ─────────────────────────────────────────────────
 
   for (const h of (hiring || [])) {

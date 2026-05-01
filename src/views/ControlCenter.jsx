@@ -597,6 +597,116 @@ const DecisionsRequired = ({ hiring, compliance, mode }) => {
   );
 };
 
+// ── NREA Capacity Card ─────────────────────────────────────────────────────────
+const NREACapacityCard = ({ leads }) => {
+  const projects = (() => {
+    try { return JSON.parse(localStorage.getItem('projects_v1') || '[]'); } catch { return []; }
+  })();
+
+  // Largest single active project — determines required tier
+  const activeProjects = projects.filter(p => p.status !== 'complete' && p.status !== 'on_hold');
+  const maxSingleKwp   = activeProjects.reduce((max, p) => Math.max(max, parseFloat(p.systemSizeKW) || 0), 0);
+  const totalKwpProj   = activeProjects.reduce((s, p) => s + (parseFloat(p.systemSizeKW) || 0), 0);
+
+  // Also compute from won CRM leads (pipeline view — includes leads without a project yet)
+  const wonKwpLeads = leads
+    .filter(l => l.stage === 'won')
+    .reduce((s, l) => {
+      const sz = (l.stageData?.feasibility_delivered?.finalSizeKwp) ||
+                 (l.stageData?.site_visit_completed?.recommendedSizeKwp) ||
+                 parseFloat(l.systemSizeKW) || 0;
+      return s + Number(sz);
+    }, 0);
+
+  // Tier thresholds (ceiling for a single project within the tier)
+  const TIERS = [
+    { name: 'Bronze', limit: 500,   next: 'Silver',   fee: 'EGP 5,000 + EGP 5,000 review' },
+    { name: 'Silver', limit: 5000,  next: 'Gold',     fee: 'EGP 10,000 + review'          },
+    { name: 'Gold',   limit: 10000, next: 'Platinum', fee: 'EGP 20,000 + review'          },
+    { name: 'Platinum', limit: Infinity, next: null,  fee: '—'                            },
+  ];
+
+  const tier     = TIERS.find(t => maxSingleKwp <= t.limit) || TIERS[TIERS.length - 1];
+  const headroom = tier.limit === Infinity ? Infinity : tier.limit - maxSingleKwp;
+  const pct      = tier.limit > 0 && tier.limit !== Infinity ? Math.min(100, Math.round(maxSingleKwp / tier.limit * 100)) : 0;
+
+  const isCritical = pct >= 100;
+  const isWarning  = pct >= 70 && !isCritical;
+  const accentColor = isCritical ? C.red : isWarning ? C.amber : C.teal;
+
+  return (
+    <Card accent={accentColor}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <SHead label="NREA Capacity" color={accentColor} />
+        <Tag label={tier.name + ' Tier'}
+          color={accentColor}
+          bg={isCritical ? '#fff5f5' : isWarning ? '#fff3cd' : '#e8f8f9'} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '.5px' }}>Largest Project</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.navy, lineHeight: 1 }}>
+            {Math.round(maxSingleKwp)} <span style={{ fontSize: 11, fontWeight: 400, color: '#aaa' }}>kWp</span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '.5px' }}>{tier.name} Ceiling</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: '#888', lineHeight: 1 }}>
+            {tier.limit === Infinity ? '∞' : tier.limit.toLocaleString()} <span style={{ fontSize: 11, fontWeight: 400, color: '#aaa' }}>kWp</span>
+          </div>
+        </div>
+        {headroom !== Infinity && (
+          <div>
+            <div style={{ fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '.5px' }}>Headroom</div>
+            <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1,
+              color: headroom < 50 ? C.red : headroom < 150 ? C.amber : C.green }}>
+              {Math.round(headroom)} <span style={{ fontSize: 11, fontWeight: 400, color: '#aaa' }}>kWp</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {tier.limit !== Infinity && (
+        <>
+          <div style={{ background: '#e0e0e0', borderRadius: 3, height: 6, marginBottom: 6, overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: accentColor, transition: 'width .3s' }} />
+          </div>
+          <div style={{ fontSize: 10, color: '#888', marginBottom: 8 }}>
+            {pct}% of {tier.name} ceiling · upgrade to {tier.next} after {tier.limit.toLocaleString()} kWp
+          </div>
+        </>
+      )}
+
+      {isCritical && (
+        <div style={{ padding: '7px 10px', background: '#fff5f5', borderRadius: 4, border: `1px solid ${C.red}33`,
+          fontSize: 11, color: C.red, fontWeight: 700, marginBottom: 6 }}>
+          ⚠ {tier.name} ceiling breached. Submit {tier.next} upgrade application before signing next contract.
+          Upgrade fee: {TIERS.find(t => t.name === tier.next)?.fee || '—'}
+        </div>
+      )}
+      {isWarning && tier.next && (
+        <div style={{ padding: '7px 10px', background: '#fff3cd', borderRadius: 4, border: `1px solid ${C.amber}33`,
+          fontSize: 11, color: C.amber, fontWeight: 600, marginBottom: 6 }}>
+          Approaching {tier.name} ceiling. Start {tier.next} upgrade application now. Fee: {tier.fee}
+        </div>
+      )}
+
+      {wonKwpLeads > 0 && (
+        <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>
+          Projects: {Math.round(totalKwpProj)} kWp active · CRM won pipeline: {Math.round(wonKwpLeads)} kWp
+        </div>
+      )}
+
+      {maxSingleKwp === 0 && (
+        <div style={{ fontSize: 11, color: '#aaa' }}>
+          No active projects. Bronze allows single projects up to 500 kWp.
+        </div>
+      )}
+    </Card>
+  );
+};
+
 // ── Main ControlCenter ─────────────────────────────────────────────────────────
 export const ControlCenter = () => {
   const [fosState, setFosState] = useState(() => {
@@ -736,11 +846,12 @@ export const ControlCenter = () => {
         <TrelloPanel engineState={sys} leads={leads} onCRMUpdate={handleCRMUpdate} />
       </Card>
 
-      {/* ── ROW 5: Hiring (full detail) + Do-Not + Compliance ────────────────── */}
+      {/* ── ROW 5: Hiring (full detail) + Do-Not + Compliance + NREA ───────── */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:14, marginBottom:14 }}>
         <HiringPanel hiring={sys.hiring} />
         <DoNotPanel items={sys.doNotList} />
         <CompliancePanel compliance={sys.compliance} />
+        <NREACapacityCard leads={leads} />
       </div>
 
       {/* ── ROW 6: Workload ───────────────────────────────────────────────────── */}

@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const SETUP_KEY = 'setup_state_v1';
+const FOS_KEY   = 'fos_state_v3';
+
+// Which setup task completions auto-flip a fosState flag
+const TASK_FOS_FLAGS = {
+  'T-B1': 'bankAccountOpen',
+  'T-R1': 'nreaSubmitted',
+  'T-R2': 'egyptERASubmitted',
+};
 
 // ── Phase definitions ──────────────────────────────────────────────────────────
 
@@ -455,6 +463,15 @@ export function SetupView() {
       ...prev,
       tasks: { ...prev.tasks, [taskId]: { ...prev.tasks[taskId], status } },
     }));
+    // Auto-sync fosState flag when a linked task is marked done
+    if (status === 'done' && TASK_FOS_FLAGS[taskId]) {
+      try {
+        const raw = localStorage.getItem(FOS_KEY);
+        const fos = raw ? JSON.parse(raw) : {};
+        fos[TASK_FOS_FLAGS[taskId]] = true;
+        localStorage.setItem(FOS_KEY, JSON.stringify(fos));
+      } catch {}
+    }
   };
 
   const setTaskNote = (taskId, note) => {
