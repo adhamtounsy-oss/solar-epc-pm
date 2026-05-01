@@ -124,93 +124,187 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
   const { day, crm, compliance, hiring, primaryDecision, mode } = engineState;
 
   // ── 1. CRM-driven tasks (per lead stage) ──────────────────────────────────
+  // Each description is pre-filled from the Stage Dossier so the person
+  // executing the task has every relevant field without opening another tab.
 
   for (const lead of leads) {
     const name  = lead.orgName || lead.id;
     const value = lead.dealValue ? ` (EGP ${Number(lead.dealValue).toLocaleString()})` : '';
     const kw    = lead.systemSizeKW ? ` · ${lead.systemSizeKW}kW` : '';
 
+    // Stage Dossier shortcuts — available whenever the dossier has been filled
+    const sd     = lead.stageData || {};
+    const sCont  = sd.contacted               || {};
+    const sQual  = sd.qualified               || {};
+    const sSvSch = sd.site_visit_scheduled    || {};
+    const sSv    = sd.site_visit_completed    || {};
+    const sFs    = sd.feasibility_sold        || {};
+    const sFd    = sd.feasibility_delivered   || {};
+    const sPs    = sd.proposal_sent           || {};
+    const sNeg   = sd.negotiation             || {};
+    const sWon   = sd.won                     || {};
+
     if (lead.stage === 'site_visit_scheduled') {
+      const timeSlot  = sSvSch.scheduledDate  ? `\nScheduled: ${sSvSch.scheduledDate}${sSvSch.scheduledTime?' @ '+sSvSch.scheduledTime:''}` : '';
+      const address   = sSvSch.siteAddress    ? `\nAddress: ${sSvSch.siteAddress}` : '';
+      const onSiteCt  = sSvSch.onSiteContactName ? `\nOn-site contact: ${sSvSch.onSiteContactName}${sSvSch.onSiteContactPhone?' / '+sSvSch.onSiteContactPhone:''}` : '';
+      const access    = sSvSch.accessNotes    ? `\nAccess: ${sSvSch.accessNotes}` : '';
+      const billLine  = sQual.monthlyBillConfirmedEGP
+        ? `\nConfirmed bill: EGP ${Number(sQual.monthlyBillConfirmedEGP).toLocaleString()}/mo${sQual.tariffCategory?' · '+sQual.tariffCategory:''}`
+        : (lead.monthlyBill ? `\nEstimated bill: EGP ${Number(lead.monthlyBill).toLocaleString()}/mo` : '');
+      const phaseConf = sQual.gridPhase       ? `\nGrid phase: ${sQual.gridPhase}` : '';
+      const dmLine    = sCont.decisionMakerName ? `\nDecision maker: ${sCont.decisionMakerName}${sCont.decisionMakerRole?' ('+sCont.decisionMakerRole+')':''}` : '';
+      const diesel    = sQual.existingDiesel  ? `\n⚠ Diesel generator on-site — assess hybrid/battery potential` : '';
       add(task(
         `crm-visit-${lead.id}`,
         `Site visit — ${name}`,
-        `Conduct qualifying site visit.\nSystem: ${lead.systemSizeKW || '?'}kW${value}.\nBring: meter, photos, load data request, roof assessment form.\nGoal: confirm system size, shading, roof access, decision maker present.`,
+        `Conduct qualifying site visit.${timeSlot}${address}${onSiteCt}${access}${billLine}${phaseConf}${dmLine}${diesel}\nSystem: ${lead.systemSizeKW||'?'}kW${value}.\nBring: smartphone meter app, tape measure, ≥10 photos, load data request, site checklist.\nGoal: roof area + shading + DISCO + electrical panel rating + confirm decision maker present.`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'site_visit_completed' }
       ));
     }
 
     if (lead.stage === 'site_visit_completed') {
+      const recSize   = sSv.recommendedSizeKwp    ? `\nRecommended size from visit: ${sSv.recommendedSizeKwp} kWp` : '';
+      const annSav    = sSv.estimatedAnnualSavingsEGP ? `\nEst. annual savings: EGP ${Number(sSv.estimatedAnnualSavingsEGP).toLocaleString()} — anchor for study fee` : '';
+      const payback   = sSv.roughPaybackYears     ? `\nRough payback: ~${sSv.roughPaybackYears} yr` : '';
+      const shading   = sSv.shadingRisk && sSv.shadingRisk !== 'None' ? `\n⚠ Shading: ${sSv.shadingRisk}${sSv.shadingNotes?' — '+sSv.shadingNotes:''}` : '';
+      const netMeter  = sSv.netMeteringEligible   ? `\n✓ Net metering eligible (${sSv.disco||'DISCO TBC'})` : (sSv.disco ? `\nDISCO: ${sSv.disco}` : '');
       add(task(
         `crm-propose-fs-${lead.id}`,
         `Propose paid feasibility study — ${name}`,
-        `Site visit done. Follow up within 48h.\nPropose feasibility study: EGP 3,000–5,000.\nPosition as credit against EPC contract.\nCollect payment before analysis starts.`,
+        `Site visit done. Follow up within 48h.${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_proposed' }
       ));
     }
 
     if (lead.stage === 'feasibility_sold') {
+      const deposit   = sFs.depositCollectedEGP  ? `\nDeposit: EGP ${Number(sFs.depositCollectedEGP).toLocaleString()} (${sFs.paymentMethod||'method TBC'})` : '';
+      const deadline  = sFs.deliveryPromisedBy   ? `\nDeadline: ${sFs.deliveryPromisedBy} — HARD` : '';
+      const assignee  = sFs.assignedTo           ? `\nAssigned to: ${sFs.assignedTo}` : '';
+      // PVsyst simulation inputs — pulled directly from site visit dossier
+      const pvSize    = sSv.recommendedSizeKwp   ? `\n• Size: ${sSv.recommendedSizeKwp} kWp` : (lead.systemSizeKW ? `\n• Size: ${lead.systemSizeKW} kWp` : '');
+      const pvRoof    = sSv.roofType             ? `\n• Roof: ${sSv.roofType}, ${sSv.usableAreaM2||'?'}m², Az ${sSv.azimuthDeg||'?'}°, Tilt ${sSv.tiltDeg||'?'}°` : '';
+      const pvShading = sSv.shadingRisk          ? `\n• Shading: ${sSv.shadingRisk}` : '';
+      const pvConsump = sSv.avgMonthlyKwh        ? `\n• Consumption: ${sSv.avgMonthlyKwh} kWh/mo · Peak: ${sSv.peakDemandKva||'?'} kVA · ${sSv.operatingProfile||''}` : '';
+      const pvDisco   = sSv.disco                ? `\n• DISCO: ${sSv.disco} · ${sSv.gridPhaseConfirmed||''} · ${sSv.feederVoltage||''}` : '';
+      const pvTariff  = sQual.tariffCategory     ? `\n• Tariff: ${sQual.tariffCategory}` : '';
       add(task(
         `crm-deliver-fs-${lead.id}`,
         `Deliver feasibility study — ${name}`,
-        `Feasibility deposit received. Deliver within 14 days.\nSystem: ${lead.systemSizeKW || '?'}kW${value}.\nInclude: PVsyst simulation, yield estimate, payback period, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in same meeting.`,
+        `Feasibility deposit received. Deliver within 14 days.${deposit}${deadline}${assignee}\n\nPVsyst inputs:${pvSize}${pvRoof}${pvShading}${pvConsump}${pvDisco}${pvTariff}\n\nDeliverable: PVsyst report, yield, payback, IRR, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in the same meeting.`,
         'TECHNICAL', 'critical', 'in-progress', 14, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_delivered' }
       ));
     }
 
     if (lead.stage === 'feasibility_delivered') {
+      const finalSize = sFd.finalSizeKwp         ? `\nFinal size: ${sFd.finalSizeKwp} kWp` : '';
+      const pbLine    = sFd.simplePaybackYears    ? `\nPayback: ${sFd.simplePaybackYears} yr · IRR: ${sFd.irr||'—'}%` : '';
+      const npvLine   = sFd.npvEGP               ? `\nNPV: EGP ${Number(sFd.npvEGP).toLocaleString()}` : '';
+      const equip     = sFd.panelBrandModel       ? `\nEquipment: ${sFd.panelBrandModel}${sFd.inverterBrandModel?' / '+sFd.inverterBrandModel:''}` : '';
+      const clientFb  = sFd.clientFeedback        ? `\nClient reaction: "${sFd.clientFeedback.slice(0,100)}"` : '';
+      const nmLine    = sSv.netMeteringEligible   ? `\n✓ Net metering eligible — include in ROI` : '';
+      const fxLine    = sPs.fxClause === true ? `\n✓ FX clause already in proposal` : `\n⚠ Ensure FX escalation clause is in the proposal`;
       add(task(
         `crm-proposal-${lead.id}`,
         `Send EPC proposal — ${name}`,
-        `Feasibility delivered. Send EPC proposal within 48h.\nDeal value: ${value}.\nMust include:\n• FX escalation clause\n• 30% deposit requirement\n• BOM with IEC-certified equipment\n• Performance guarantee`,
+        `Feasibility delivered. Send EPC proposal within 48h.${finalSize}${pbLine}${npvLine}${equip}${clientFb}${nmLine}${fxLine}\nMust include: FX escalation clause · 30% deposit requirement · IEC-certified BOM · Performance guarantee.`,
         'SALES', 'critical', 'this-week', 2, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'proposal_sent' }
       ));
     }
 
     if (lead.stage === 'proposal_sent') {
+      const ctVal     = sPs.contractValueEGP     ? `\nContract value: EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : (value ? `\nEst. deal value:${value}` : '');
+      const validLine = sPs.validUntil           ? `\nValid until: ${sPs.validUntil} — use as close lever` : '';
+      const fxLine    = sPs.fxClause === true ? `\n✓ FX clause included` : `\n⚠ No FX clause — add immediately in any revision`;
+      const termsLine = sPs.paymentTerms         ? `\nPayment terms: ${sPs.paymentTerms}` : '';
+      const objLine   = sQual.objections         ? `\nKnown objections: ${sQual.objections.slice(0,100)}` : '';
+      const fbLine    = sFd.clientFeedback        ? `\nFeasibility reaction: "${sFd.clientFeedback.slice(0,80)}"` : '';
       add(task(
         `crm-followup-prop-${lead.id}`,
         `Follow up on EPC proposal — ${name}`,
-        `Proposal sent. Follow up 2×/week.\nStrategy: in-person meeting to present irradiance model.\nObjection: address technical concerns with engineer present.\nDeadline: if no response in 10 days, invoke 48h FX validity notice.`,
+        `Proposal sent. Follow up 2×/week.${ctVal}${validLine}${fxLine}${termsLine}${objLine}${fbLine}\nStrategy: in-person meeting with irradiance model. If no response in 10 days: invoke 48h FX validity notice.`,
         'SALES', 'high', 'this-week', 5, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'negotiation' }
       ));
     }
 
     if (lead.stage === 'negotiation') {
+      const ctVal     = sPs.contractValueEGP     ? `\nCurrent value: EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : (value ? `\nEst. value:${value}` : '');
+      const stickLine = sNeg.mainStickingPoints  ? `\nSticking points: ${sNeg.mainStickingPoints.slice(0,120)}` : '';
+      const concLine  = sNeg.concessionsMade     ? `\nConcessions so far: ${sNeg.concessionsMade.slice(0,100)}` : '';
+      const marginLine= sNeg.marginImpactEGP     ? `\n⚠ Margin reduced EGP ${Number(sNeg.marginImpactEGP).toLocaleString()} already` : '';
+      const revLine   = sNeg.revisedProposalSent ? `\n✓ Revised proposal already sent` : '';
+      const fxLine    = sPs.fxClause === true ? `\n✓ FX clause confirmed` : `\n⚠ No FX clause — non-negotiable: must be in final contract`;
       add(task(
         `crm-close-${lead.id}`,
         `Close contract — ${name}${value}`,
-        `Active negotiation.\nBook in-person meeting this week.\nBring: signed contract template, deposit invoice, FX clause explanation.\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nWalk away if deposit refused.`,
+        `Active negotiation. Book in-person meeting this week.${ctVal}${stickLine}${concLine}${marginLine}${revLine}${fxLine}\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nBring: signed contract template, deposit invoice, FX clause explainer.\nWalk away if deposit refused.`,
         'SALES', 'critical', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'won' }
       ));
     }
 
     if (lead.stage === 'won') {
-      // Won generates multiple execution tasks
+      const contractRef = sWon.contractRef       ? ` (${sWon.contractRef})` : '';
+      const kickoff     = sWon.kickoffDate       ? `\nKickoff date: ${sWon.kickoffDate}` : '';
+      const ctVal       = sPs.contractValueEGP   ? `\nContract value: EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : (value ? `\nEst. value:${value}` : '');
+
       add(task(
         `exec-deposit-${lead.id}`,
         `Collect 30% deposit — ${name}`,
-        `Contract signed. Confirm deposit cleared before ANY equipment order.\nDo not proceed to procurement without cleared funds.\nIssue deposit invoice immediately.`,
+        `Contract signed${contractRef}. Confirm deposit cleared before ANY equipment order.${ctVal}${kickoff}\nIssue deposit invoice immediately. No procurement without cleared funds.`,
         'EXECUTION', 'critical', 'in-progress', 2, 'crm', lead.id,
         { fosStateUpdate: { depositCollected: true } }
       ));
+
+      // DISCO task — named after the specific distribution company from the site visit
+      const discoName  = sSv.disco || 'DISCO';
+      const nmStatus   = sSv.netMeteringEligible === true
+        ? `\n✓ Net metering eligibility confirmed at site visit`
+        : `\n⚠ Net metering eligibility not confirmed — verify with ${discoName} before submitting`;
+      const sysSpec    = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
+      const sysLine    = sysSpec ? `\nSystem: ${sysSpec} kWp — prepare spec sheet` : '';
+      const addrLine   = sSvSch.siteAddress ? `\nSite: ${sSvSch.siteAddress}` : '';
+      const panelSpec  = sFd.panelBrandModel ? `\nPanel for spec sheet: ${sFd.panelBrandModel}` : '';
+      const feederLine = sSv.feederVoltage   ? `\nFeeder: ${sSv.feederVoltage} · ${sSv.gridPhaseConfirmed||'phase TBC'}` : '';
       add(task(
         `exec-disco-${lead.id}`,
-        `Submit DISCO net-metering application — ${name}`,
-        `Submit DISCO application same day deposit clears.\nGet reference number — track in CRM notes.\nRequires: system spec sheet, site plan, NREA certificate copy.`,
+        `Submit ${discoName} net-metering application — ${name}`,
+        `Submit ${discoName} application same day deposit clears.${nmStatus}${sysLine}${addrLine}${panelSpec}${feederLine}\nDocuments: system spec sheet, site plan, NREA certificate copy, commercial register.\nGet reference number — log in CRM notes.`,
         'COMPLIANCE', 'critical', 'this-week', 1, 'crm', lead.id,
         { fosStateUpdate: { discoSubmitted: true } }
       ));
+
+      // Procurement task — pre-filled with equipment from feasibility study
+      const panelLine  = sFd.panelBrandModel     ? `\nPanels: ${sFd.panelBrandModel}` : '';
+      const invLine    = sFd.inverterBrandModel  ? `\nInverter: ${sFd.inverterBrandModel}` : '';
+      const pcLine     = sSv.estimatedPanelCount ? `\nPanel count: ~${sSv.estimatedPanelCount} × 400W` : '';
+      const sizeProc   = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
+      const sizeLine   = sizeProc ? `\nSystem: ${sizeProc} kWp` : '';
       add(task(
         `exec-procure-${lead.id}`,
         `Place equipment order — ${name}`,
-        `Only after deposit cleared.\nLead times: panels 3–4 weeks, inverters 2–3 weeks, BOS 1–2 weeks.\nCollect IEC certificates with every order.\nLock panel price within 72h of contract signature.`,
+        `Only after deposit cleared.${sizeLine}${panelLine}${invLine}${pcLine}\nLead times: panels 3–4 weeks, inverters 2–3 weeks, BOS 1–2 weeks.\nLock panel price within 72h of contract signature. Collect IEC certificates with every order.`,
         'EXECUTION', 'critical', 'backlog', 3, 'crm', lead.id,
+        {}
+      ));
+
+      // Engineer mobilization brief — new task; lands the engineerBrief dossier field
+      const engBrief   = sWon.engineerBrief      ? `\nEngineer brief: ${sWon.engineerBrief}` : '';
+      const roofLine   = sSv.roofType            ? `\nRoof: ${sSv.roofType}, ${sSv.usableAreaM2||'?'}m², Az ${sSv.azimuthDeg||'?'}°, Tilt ${sSv.tiltDeg||'?'}°` : '';
+      const shadingMob = sSv.shadingRisk && sSv.shadingRisk !== 'None' ? `\n⚠ Shading: ${sSv.shadingRisk}${sSv.shadingNotes?' — '+sSv.shadingNotes:''}` : '';
+      const brkrLine   = sSv.mainBreakerAmps     ? `\nMain breaker: ${sSv.mainBreakerAmps}A · DB: ${sSv.dbPanelBrand||'TBC'}` : '';
+      const gridLine   = sSv.gridPhaseConfirmed  ? `\nGrid: ${sSv.gridPhaseConfirmed} · ${sSv.feederVoltage||'voltage TBC'}` : '';
+      const facilsLine = sSv.facilitiesContactName ? `\nOn-site contact: ${sSv.facilitiesContactName}${sSv.facilitiesContactPhone?' / '+sSv.facilitiesContactPhone:''}` : '';
+      add(task(
+        `exec-eng-brief-${lead.id}`,
+        `Brief engineer & confirm mobilization — ${name}`,
+        `Contract won. Brief engineer and lock mobilization date.${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.`,
+        'TECHNICAL', 'critical', 'in-progress', 1, 'crm', lead.id,
         {}
       ));
     }
@@ -220,10 +314,13 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         !['won','lost','nurture'].includes(lead.stage)) {
       const id = `crm-overdue-${lead.id}`;
       if (!pushed.has(id)) {
+        const dmLine    = sCont.decisionMakerName ? ` · DM: ${sCont.decisionMakerName}` : '';
+        const budgetLine= sCont.budgetIndication  ? `\nBudget: ${sCont.budgetIndication}` : '';
+        const needsLine = sCont.needsSummary      ? `\nNeeds: ${sCont.needsSummary.slice(0,100)}` : '';
         add(task(
           id,
           `Follow up — ${name} [OVERDUE]`,
-          `Follow-up is overdue.\nNext action: ${lead.nextAction || 'contact lead'}.\nStage: ${lead.stage.replace(/_/g,' ')}.`,
+          `Follow-up is overdue.${dmLine}\nNext action: ${lead.nextAction || 'contact lead'}.\nStage: ${lead.stage.replace(/_/g,' ')}.${budgetLine}${needsLine}`,
           'SALES', 'high', 'this-week', 0, 'crm', lead.id,
           {}
         ));
@@ -273,6 +370,45 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         { fosStateUpdate: { fxAlertActive: true } }
       ));
     }
+  }
+
+  // ── Cross-lead compliance checks ──────────────────────────────────────────
+
+  // FX exposure: proposals out without FX clause (uses dossier data)
+  const propsWithoutFX = leads.filter(l =>
+    (l.stage === 'proposal_sent' || l.stage === 'negotiation') &&
+    ((l.stageData || {}).proposal_sent || {}).contractValueEGP &&
+    ((l.stageData || {}).proposal_sent || {}).fxClause === false
+  );
+  if (propsWithoutFX.length > 0) {
+    const totalExp = propsWithoutFX.reduce((s, l) =>
+      s + (Number(((l.stageData||{}).proposal_sent||{}).contractValueEGP)||0), 0);
+    add(task(
+      'comp-fx-exposure',
+      `FX exposure: ${propsWithoutFX.length} proposal${propsWithoutFX.length>1?'s':''} without FX clause`,
+      `EGP ${totalExp.toLocaleString()} in open proposals with no FX escalation clause.\nLeads: ${propsWithoutFX.map(l=>l.orgName).join(', ')}.\nAction: send revised proposals with FX clause today.\nRisk: EGP/USD devaluation >5% wipes margin on these contracts entirely.`,
+      'COMPLIANCE', 'critical', 'this-week', 1, 'compliance', 'C-FX',
+      {}
+    ));
+  }
+
+  // NREA capacity: approaching Bronze tier ceiling (500 kWp per single project)
+  const wonLeads = leads.filter(l => l.stage === 'won');
+  const totalKwpCommitted = wonLeads.reduce((s, l) => {
+    const sz = (l.stageData?.feasibility_delivered?.finalSizeKwp) ||
+               (l.stageData?.site_visit_completed?.recommendedSizeKwp) ||
+               parseFloat(l.systemSizeKW) || 0;
+    return s + Number(sz);
+  }, 0);
+  if (totalKwpCommitted >= 400) {
+    const isBreach = totalKwpCommitted > 500;
+    add(task(
+      'comp-nrea-tier',
+      `NREA tier: ${Math.round(totalKwpCommitted)} kWp committed${isBreach?' — Bronze BREACHED':''}`,
+      `${Math.round(totalKwpCommitted)} kWp across won projects. Bronze ceiling: 500 kWp per single project.\n${isBreach?'⚠ BREACH: You cannot execute the current project portfolio under Bronze tier.':'Approaching ceiling — upgrade before signing any new contract ≥ 500 kWp.'}\nUpgrade to Silver (≤ 5 MWp): EGP 10,000 + review fee.\nDocuments: updated capital proof, additional licensed engineer CV with Syndicate stamp.\nSubmit to NREA Technical Affairs before next contract signature.`,
+      'COMPLIANCE', isBreach ? 'critical' : 'high', 'this-week', 7, 'compliance', 'C-NREA',
+      {}
+    ));
   }
 
   // ── 3. Hiring-driven tasks ─────────────────────────────────────────────────
