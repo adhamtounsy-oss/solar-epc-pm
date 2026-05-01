@@ -1,6 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ControlCenter } from './views/ControlCenter';
 import { CRMView }       from './views/CRMView';
+
+// ── Hash-based Trello setup ────────────────────────────────────────────────────
+// Visiting /#trello=BASE64 pre-configures Trello without needing the console.
+// Hash is never sent to the server. Cleared from URL after reading.
+const bootstrapFromHash = () => {
+  try {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#trello=')) return false;
+    const encoded = hash.slice('#trello='.length);
+    const config  = JSON.parse(atob(encoded));
+    if (!config.apiKey || !config.apiToken || !config.boardId) return false;
+    localStorage.setItem('trello_config_v1', JSON.stringify(config));
+    // Clean the hash so it isn't reused on refresh
+    window.history.replaceState(null, '', window.location.pathname);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const TABS = [
   { id:'control', label:'Control Center' },
@@ -8,11 +27,28 @@ const TABS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('control');
+  const [tab, setTab]             = useState('control');
+  const [setupDone, setSetupDone] = useState(false);
+
+  useEffect(() => {
+    const applied = bootstrapFromHash();
+    if (applied) setSetupDone(true);
+  }, []);
 
   return (
     <div style={{ minHeight:'100vh', background:'#f0f2f5',
       fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', fontSize:13, color:'#1a1a1a' }}>
+
+      {/* Trello bootstrap success banner */}
+      {setupDone && (
+        <div style={{ background:'#1a7a3f', color:'#fff', padding:'10px 20px',
+          display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:12 }}>
+          <span>✓ Trello connected — board and lists configured automatically.</span>
+          <button onClick={() => setSetupDone(false)}
+            style={{ background:'none', border:'none', color:'rgba(255,255,255,.7)',
+              cursor:'pointer', fontSize:16, lineHeight:1 }}>×</button>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ background:'#0D2137', color:'#fff', padding:'0 20px',
