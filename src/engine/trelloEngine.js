@@ -20,29 +20,84 @@ export const TASK_TYPES = {
 };
 
 export const LIST_TARGETS = {
-  'this-week':   { label:'This Week',   trelloName:'🔴 This Week',    priority: 1 },
+  'this-week':   { label:'This Week',    trelloName:'🔴 This Week',    priority: 1 },
   'in-progress': { label:'In Execution', trelloName:'🔵 In Execution', priority: 0 },
   'backlog':     { label:'Queued',       trelloName:'📋 Queued',        priority: 2 },
 };
 
+// ── Role definitions ───────────────────────────────────────────────────────────
+// Trello label name uses '→ ' prefix to distinguish from task-type labels.
+// When a real employee joins Trello they are assigned as a board member and
+// the role label is removed in bulk — zero friction transition.
+
+export const ROLE_LABELS = {
+  FOUNDER:     { label:'Founder',      trelloName:'→ Founder',      color:'#856404', trelloColor:'yellow'       },
+  ENGINEER:    { label:'Engineer',     trelloName:'→ Engineer',     color:'#1A6B72', trelloColor:'blue'         },
+  SALES_REP:   { label:'Sales Rep',    trelloName:'→ Sales Rep',    color:'#1E7E34', trelloColor:'lime'         },
+  ACCOUNTANT:  { label:'Accountant',   trelloName:'→ Accountant',   color:'#C0392B', trelloColor:'pink'         },
+  PROCUREMENT: { label:'Procurement',  trelloName:'→ Procurement',  color:'#5C2D91', trelloColor:'light-orange' },
+  TECHNICIAN:  { label:'Technician',   trelloName:'→ Technician',   color:'#555',    trelloColor:'light-blue'   },
+};
+
+// ── Assignment logic ───────────────────────────────────────────────────────────
+// Returns { primary: ROLE_KEY, secondary: ROLE_KEY | null }
+// Rule: critical or high priority → Founder always secondary unless already primary
+
+export const getTaskAssignees = (task) => {
+  const { id, type, source, priority } = task;
+
+  let primary = 'FOUNDER';
+  let secondary = null;
+
+  if (id === 'C-BANK') {
+    primary = 'FOUNDER'; secondary = 'ACCOUNTANT';
+  } else if (id === 'C-NREA' || (source === 'compliance' && /nrea/i.test(id))) {
+    primary = 'FOUNDER'; secondary = 'ENGINEER';
+  } else if (id === 'C-FX') {
+    primary = 'FOUNDER'; secondary = 'ACCOUNTANT';
+  } else if (id === 'C-ENG' || source === 'hiring' || type === 'HIRING') {
+    primary = 'FOUNDER'; secondary = null;
+  } else if (source === 'decision') {
+    primary = 'FOUNDER'; secondary = null;
+  } else if (/disco/i.test(id)) {
+    primary = 'FOUNDER'; secondary = 'ENGINEER';
+  } else if (/deposit/i.test(id)) {
+    primary = 'FOUNDER'; secondary = 'ACCOUNTANT';
+  } else if (/order/i.test(id)) {
+    primary = 'PROCUREMENT'; secondary = 'FOUNDER';
+  } else if (type === 'TECHNICAL') {
+    primary = 'ENGINEER'; secondary = 'FOUNDER';
+  } else if (type === 'SALES') {
+    primary = 'SALES_REP'; secondary = null;
+  } else if (type === 'EXECUTION') {
+    primary = 'ENGINEER'; secondary = null;
+  } else if (type === 'COMPLIANCE') {
+    primary = 'FOUNDER'; secondary = 'ENGINEER';
+  }
+
+  // Critical/high override: Founder always present unless already assigned
+  if ((priority === 'critical' || priority === 'high') && primary !== 'FOUNDER' && !secondary) {
+    secondary = 'FOUNDER';
+  }
+
+  return { primary, secondary };
+};
+
 // ── Task schema factory ────────────────────────────────────────────────────────
 
-const task = (id, title, desc, type, priority, listTarget, dueInDays, source, sourceRef, onComplete = {}) => ({
-  id,
-  title,
-  description: desc,
-  type,
-  priority,
-  listTarget,   // 'this-week' | 'in-progress' | 'backlog'
-  dueInDays,
-  source,       // 'crm' | 'decision' | 'hiring' | 'compliance'
-  sourceRef,    // lead.id | decision.id | etc.
-  onComplete,   // { crmLeadId, crmNextStage, fosStateUpdate }
-  pushed:       false,
-  trelloCardId: null,
-  completed:    false,
-  createdAt:    Date.now(),
-});
+const task = (id, title, desc, type, priority, listTarget, dueInDays, source, sourceRef, onComplete = {}) => {
+  const t = {
+    id, title, description: desc, type, priority,
+    listTarget,   // 'this-week' | 'in-progress' | 'backlog'
+    dueInDays,
+    source,       // 'crm' | 'decision' | 'hiring' | 'compliance'
+    sourceRef,
+    onComplete,
+    pushed: false, trelloCardId: null, completed: false, createdAt: Date.now(),
+  };
+  t.assignees = getTaskAssignees(t);
+  return t;
+};
 
 // ── Next CRM stage map ────────────────────────────────────────────────────────
 
@@ -396,22 +451,36 @@ export const trelloCreateCard = (config, { title, description, listId, labelIds,
 };
 
 // ── BOARD SETUP ───────────────────────────────────────────────────────────────
-// Ensure required labels exist; return label-name → id map
+// Creates type labels + role labels. Returns { typeMap, roleMap }.
+// typeMap keys: SALES, TECHNICAL, COMPLIANCE, EXECUTION, HIRING
+// roleMap keys: FOUNDER, ENGINEER, SALES_REP, ACCOUNTANT, PROCUREMENT, TECHNICIAN
 
 export const ensureLabels = async (config) => {
   const existing = await trelloGetBoardLabels(config);
-  const map = {};
+  const byName = {};
   for (const l of existing) {
-    if (l.name) map[l.name.toUpperCase()] = l.id;
+    if (l.name) byName[l.name] = l.id;
   }
-  const needed = Object.keys(TASK_TYPES);
-  for (const typeName of needed) {
-    if (!map[typeName]) {
-      const created = await trelloCreateLabel(config, typeName, TASK_TYPES[typeName].trelloColor);
-      map[typeName] = created.id;
+
+  const typeMap = {};
+  for (const [key, def] of Object.entries(TASK_TYPES)) {
+    if (byName[key]) { typeMap[key] = byName[key]; }
+    else {
+      const c = await trelloCreateLabel(config, key, def.trelloColor);
+      typeMap[key] = c.id;
     }
   }
-  return map;
+
+  const roleMap = {};
+  for (const [key, def] of Object.entries(ROLE_LABELS)) {
+    if (byName[def.trelloName]) { roleMap[key] = byName[def.trelloName]; }
+    else {
+      const c = await trelloCreateLabel(config, def.trelloName, def.trelloColor);
+      roleMap[key] = c.id;
+    }
+  }
+
+  return { typeMap, roleMap };
 };
 
 // ── PUSH TASK TO TRELLO ───────────────────────────────────────────────────────
@@ -424,20 +493,31 @@ const extractFosId = (desc = '') => { const m = desc.match(/<!-- fos:([^>]+) -->
 
 // Pass pre-fetched boardCards to avoid one extra API call per push when
 // pushing in bulk (pushAll fetches once and threads it through).
-export const pushTask = async (config, task, listMapping, labelMapping, boardCards = null) => {
-  const listId  = listMapping[task.listTarget];
-  const labelId = labelMapping[task.type];
+// labelMaps = { typeMap, roleMap } as returned by ensureLabels.
+export const pushTask = async (config, task, listMapping, labelMaps, boardCards = null) => {
+  const listId = listMapping[task.listTarget];
   if (!listId) throw new Error(`No list mapped for target "${task.listTarget}"`);
 
   const cards = boardCards ?? await trelloGetBoardCards(config);
   const existing = cards.find(c => extractFosId(c.desc) === task.id);
   if (existing) return existing.id;
 
+  const { typeMap = {}, roleMap = {} } = labelMaps ?? {};
+  const labelIds = [
+    typeMap[task.type],
+    roleMap[task.assignees?.primary],
+    roleMap[task.assignees?.secondary],
+  ].filter(Boolean);
+
+  const primary   = ROLE_LABELS[task.assignees?.primary]?.label   ?? task.assignees?.primary   ?? '—';
+  const secondary = ROLE_LABELS[task.assignees?.secondary]?.label ?? task.assignees?.secondary ?? null;
+  const assigneeLine = `\n\n👤 Primary: ${primary}${secondary ? ` · 👥 CC: ${secondary}` : ''}`;
+
   const card = await trelloCreateCard(config, {
     title:       task.title,
-    description: task.description + FOS_MARKER(task.id),
+    description: task.description + assigneeLine + FOS_MARKER(task.id),
     listId,
-    labelIds:    labelId ? [labelId] : [],
+    labelIds,
     dueInDays:   task.dueInDays,
   });
   return card.id;

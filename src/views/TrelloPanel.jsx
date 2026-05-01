@@ -4,7 +4,7 @@ import {
   syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl,
   deduplicateBoardCards, migrateBoardLists,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
-  taskToClipboard, TASK_TYPES, LIST_TARGETS,
+  taskToClipboard, TASK_TYPES, LIST_TARGETS, ROLE_LABELS, getTaskAssignees,
 } from '../engine/trelloEngine';
 
 // ── Storage ────────────────────────────────────────────────────────────────────
@@ -129,10 +129,12 @@ const ListMapper = ({ config, onSave }) => {
 // ── Task Card ──────────────────────────────────────────────────────────────────
 const TaskCard = ({ task, onPush, onCopy, onComplete, pushing, trelloReady }) => {
   const [expanded, setExpanded] = useState(false);
-  const tc = TASK_TYPES[task.type];
-  const pc = PRIORITY_COLOR[task.priority];
-  const pb = PRIORITY_BG[task.priority];
-  const lt = LIST_TARGETS[task.listTarget];
+  const tc  = TASK_TYPES[task.type];
+  const pc  = PRIORITY_COLOR[task.priority];
+  const pb  = PRIORITY_BG[task.priority];
+  const lt  = LIST_TARGETS[task.listTarget];
+  const pri = ROLE_LABELS[task.assignees?.primary];
+  const sec = ROLE_LABELS[task.assignees?.secondary];
 
   return (
     <div style={{ background:'#fff', borderRadius:6, border:`1px solid #eee`,
@@ -151,6 +153,12 @@ const TaskCard = ({ task, onPush, onCopy, onComplete, pushing, trelloReady }) =>
                   bg={task.dueInDays <= 1 ? '#fff5f5' : '#f5f5f5'} />
               )}
             </div>
+            {(pri || sec) && (
+              <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:5 }}>
+                {pri && <Tag label={`👤 ${pri.label}`} color={pri.color} bg={pri.color+'18'} />}
+                {sec && <Tag label={`👥 ${sec.label}`} color={sec.color} bg={sec.color+'12'} />}
+              </div>
+            )}
             <div style={{ fontSize:12, fontWeight:700, color: task.completed ? '#888' : C.navy,
               lineHeight:1.35, textDecoration: task.completed ? 'line-through' : 'none' }}>
               {task.title}
@@ -236,7 +244,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [taskQueue, setTaskQueue] = useState(() => loadTaskQueue());
   const [pushing, setPushing]     = useState(null);   // task.id currently being pushed
   const [syncing, setSyncing]     = useState(false);
-  const [labelMap, setLabelMap]   = useState({});
+  const [labelMap, setLabelMap]   = useState({ typeMap:{}, roleMap:{} });
   const [syncMsg, setSyncMsg]     = useState('');
   const [copied, setCopied]       = useState(null);
   const [filter, setFilter]       = useState('pending'); // 'pending' | 'pushed' | 'all'
@@ -271,7 +279,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     const batch = pendingTasks.filter(pt => !pt.pushed);
     if (!batch.length) return;
     let lm = labelMap;
-    if (Object.keys(lm).length === 0) {
+    if (Object.keys(lm.typeMap).length === 0) {
       lm = await ensureLabels(config);
       setLabelMap(lm);
     }
@@ -288,7 +296,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     setPushing(task.id);
     try {
       let lm = existingLabelMap ?? labelMap;
-      if (Object.keys(lm).length === 0) {
+      if (Object.keys(lm.typeMap ?? {}).length === 0) {
         lm = await ensureLabels(config);
         setLabelMap(lm);
       }
