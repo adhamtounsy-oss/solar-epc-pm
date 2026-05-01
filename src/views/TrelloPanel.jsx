@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   generateTasks, pushTask, ensureLabels, validateTrelloConnection,
-  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl,
+  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl, deduplicateBoardCards,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS,
 } from '../engine/trelloEngine';
@@ -239,8 +239,9 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [syncMsg, setSyncMsg]     = useState('');
   const [copied, setCopied]       = useState(null);
   const [filter, setFilter]       = useState('pending'); // 'pending' | 'pushed' | 'all'
-  const [lastSynced, setLastSynced] = useState(null);
-  const [boardUrl, setBoardUrl]     = useState(null);
+  const [lastSynced, setLastSynced]   = useState(null);
+  const [boardUrl, setBoardUrl]       = useState(null);
+  const [deduping, setDeduping]       = useState(false);
 
   const trelloReady = !!(
     config?.apiKey && config?.apiToken && config?.boardId &&
@@ -342,6 +343,19 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     trelloGetBoardUrl(config).then(b => setBoardUrl(b.shortUrl)).catch(() => {});
   }, [trelloReady, config, boardUrl]);
 
+  const handleDedup = async () => {
+    if (!trelloReady) return;
+    setDeduping(true); setSyncMsg('');
+    try {
+      const count = await deduplicateBoardCards(config);
+      setSyncMsg(count > 0 ? `Archived ${count} duplicate card${count > 1 ? 's' : ''}.` : 'No duplicates found.');
+    } catch (e) {
+      setSyncMsg(`Dedup failed: ${e.message}`);
+    } finally {
+      setDeduping(false);
+    }
+  };
+
   const handleApplyFeedback = (completedTask, lead) => {
     if (completedTask.onComplete?.crmNextStage) {
       onCRMUpdate(lead.id, completedTask.onComplete.crmNextStage);
@@ -405,6 +419,10 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
                 {syncing ? 'Syncing...' : lastSynced
                   ? `↻ Synced ${Math.round((Date.now() - lastSynced) / 60000) || '<1'} min ago`
                   : '↻ Sync from Trello'}
+              </button>
+              <button onClick={handleDedup} disabled={deduping}
+                style={{ ...BTN('#f5f5f5', '#c0392b'), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
+                {deduping ? 'Cleaning...' : '⊘ Clean Duplicates'}
               </button>
               {pendingCount > 0 && (
                 <button onClick={pushAll}

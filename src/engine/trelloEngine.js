@@ -310,6 +310,36 @@ export const trelloGetBoardLabels = (config) =>
 export const trelloGetBoardCards = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/cards?filter=all&fields=id,name,desc,idList,labels,dueComplete,closed`, null, config);
 
+const trelloArchiveCard = (config, cardId) =>
+  trelloReq('PUT', `/cards/${cardId}`, { closed: true }, config);
+
+// Scans the board for duplicate cards (by fos marker, then by title as fallback),
+// archives all but the newest copy of each, and returns the count archived.
+export const deduplicateBoardCards = async (config) => {
+  const cards = (await trelloGetBoardCards(config)).filter(c => !c.closed);
+
+  // Group: prefer fos marker, fall back to normalised title
+  const groups = {};
+  for (const card of cards) {
+    const fosId = extractFosId(card.desc);
+    const key   = fosId ? `fos:${fosId}` : `title:${card.name.trim().toLowerCase()}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(card);
+  }
+
+  let archived = 0;
+  for (const group of Object.values(groups)) {
+    if (group.length < 2) continue;
+    // Keep the first card returned by Trello (oldest position); archive the rest
+    const [, ...dupes] = group;
+    for (const dupe of dupes) {
+      await trelloArchiveCard(config, dupe.id);
+      archived++;
+    }
+  }
+  return archived;
+};
+
 export const trelloCreateLabel = (config, name, color) =>
   trelloReq('POST', `/boards/${config.boardId}/labels`, { name, color }, config);
 
