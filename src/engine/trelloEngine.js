@@ -365,7 +365,9 @@ export const trelloGetBoardLabels = (config) =>
 export const trelloGetBoardCards = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/cards?filter=all&fields=id,name,desc,idList,labels,dueComplete,closed`, null, config);
 
-const trelloArchiveCard  = (config, cardId)        => trelloReq('PUT',  `/cards/${cardId}`,         { closed: true }, config);
+const trelloArchiveCard    = (config, cardId)            => trelloReq('PUT',  `/cards/${cardId}`,              { closed: true }, config);
+const trelloAddCardLabel   = (config, cardId, labelId)   => trelloReq('POST', `/cards/${cardId}/idLabels`,     { value: labelId }, config);
+const trelloRemoveCardLabel= (config, cardId, labelId)   => trelloReq('DELETE',`/cards/${cardId}/idLabels/${labelId}`, null, config);
 const trelloRenameList   = (config, listId, name)   => trelloReq('PUT',  `/lists/${listId}`,          { name }, config);
 const trelloArchiveList  = (config, listId)          => trelloReq('PUT',  `/lists/${listId}/closed`,   { value: true }, config);
 const trelloCreateList   = (config, name, pos = 'bottom') =>
@@ -407,6 +409,70 @@ export const migrateBoardLists = async (config) => {
 
   const finalLists = await trelloGetBoardLists(config);
   return { lists: finalLists };
+};
+
+// ── BACKFILL ROLE LABELS ───────────────────────────────────────────────────────
+// Applies role labels to all existing open cards on the board.
+// Cards with a fos marker get precise assignment from getTaskAssignees.
+// Cards without a marker get role inferred from their existing type label.
+export const backfillAssigneeLabels = async (config) => {
+  const { typeMap, roleMap } = await ensureLabels(config);
+
+  // Invert typeMap so we can look up type name by label ID
+  const labelIdToType = Object.fromEntries(Object.entries(typeMap).map(([k, v]) => [v, k]));
+
+  // Fallback assignment by type label when no fos marker present
+  const roleByType = {
+    SALES:      { primary: 'SALES_REP',   secondary: 'FOUNDER'   },
+    TECHNICAL:  { primary: 'ENGINEER',    secondary: 'FOUNDER'   },
+    COMPLIANCE: { primary: 'FOUNDER',     secondary: 'ENGINEER'  },
+    EXECUTION:  { primary: 'ENGINEER',    secondary: 'FOUNDER'   },
+    HIRING:     { primary: 'FOUNDER',     secondary: null        },
+  };
+
+  const roleIds = new Set(Object.values(roleMap));
+  const cards   = (await trelloGetBoardCards(config)).filter(c => !c.closed);
+  let updated   = 0;
+
+  for (const card of cards) {
+    // Determine target assignees
+    let assignees = null;
+
+    const fosId = extractFosId(card.desc);
+    if (fosId) {
+      // Reconstruct a minimal task-like object for getTaskAssignees
+      const typeLabel = card.labels?.find(l => typeMap[l.name]);
+      const fakeTask  = {
+        id:       fosId,
+        type:     typeLabel?.name ?? 'EXECUTION',
+        source:   fosId.startsWith('crm-') ? 'crm' : fosId.startsWith('hire') ? 'hiring' : 'compliance',
+        priority: 'high',
+      };
+      assignees = getTaskAssignees(fakeTask);
+    } else {
+      const typeLabel = card.labels?.find(l => labelIdToType[l.id]);
+      const typeName  = typeLabel ? labelIdToType[typeLabel.id] : null;
+      assignees = typeName ? roleByType[typeName] : { primary: 'FOUNDER', secondary: null };
+    }
+
+    if (!assignees) continue;
+
+    // Strip any stale role labels already on the card
+    for (const lbl of (card.labels || [])) {
+      if (roleIds.has(lbl.id)) {
+        await trelloRemoveCardLabel(config, card.id, lbl.id).catch(() => {});
+      }
+    }
+
+    // Apply fresh role labels
+    const toAdd = [roleMap[assignees.primary], roleMap[assignees.secondary]].filter(Boolean);
+    for (const labelId of toAdd) {
+      await trelloAddCardLabel(config, card.id, labelId).catch(() => {});
+    }
+    updated++;
+  }
+
+  return updated;
 };
 
 // Scans the board for duplicate cards (by fos marker, then by title as fallback),

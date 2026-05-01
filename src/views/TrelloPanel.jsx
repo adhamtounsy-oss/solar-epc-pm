@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   generateTasks, pushTask, ensureLabels, validateTrelloConnection,
   syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl,
-  deduplicateBoardCards, migrateBoardLists,
+  deduplicateBoardCards, migrateBoardLists, backfillAssigneeLabels,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS, ROLE_LABELS, getTaskAssignees,
 } from '../engine/trelloEngine';
@@ -252,6 +252,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [boardUrl, setBoardUrl]       = useState(null);
   const [deduping, setDeduping]       = useState(false);
   const [migrating, setMigrating]     = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
 
   const trelloReady = !!(
     config?.apiKey && config?.apiToken && config?.boardId &&
@@ -385,6 +386,19 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     }
   };
 
+  const handleBackfill = async () => {
+    if (!trelloReady) return;
+    setBackfilling(true); setSyncMsg('');
+    try {
+      const count = await backfillAssigneeLabels(config);
+      setSyncMsg(`Role labels applied to ${count} card${count !== 1 ? 's' : ''}.`);
+    } catch (e) {
+      setSyncMsg(`Backfill failed: ${e.message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   const handleApplyFeedback = (completedTask, lead) => {
     if (completedTask.onComplete?.crmNextStage) {
       onCRMUpdate(lead.id, completedTask.onComplete.crmNextStage);
@@ -456,6 +470,10 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
               <button onClick={handleMigrateLists} disabled={migrating}
                 style={{ ...BTN('#f5f5f5', '#5C2D91'), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
                 {migrating ? 'Renaming...' : '✎ Rename Lists'}
+              </button>
+              <button onClick={handleBackfill} disabled={backfilling}
+                style={{ ...BTN('#f5f5f5', '#1A6B72'), border:'1px solid #ddd', fontSize:10, padding:'5px 12px' }}>
+                {backfilling ? 'Applying...' : '⬛ Apply Role Labels'}
               </button>
               {pendingCount > 0 && (
                 <button onClick={pushAll}
