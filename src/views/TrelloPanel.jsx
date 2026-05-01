@@ -126,6 +126,81 @@ const ListMapper = ({ config, onSave }) => {
   );
 };
 
+// ── Ad-hoc Task Form ───────────────────────────────────────────────────────────
+const EMPTY_FORM = { title:'', type:'SALES', priority:'high', listTarget:'this-week', dueInDays:'', description:'' };
+
+const AdHocTaskForm = ({ onSubmit }) => {
+  const [open, setOpen]   = useState(false);
+  const [form, setForm]   = useState(EMPTY_FORM);
+  const [busy, setBusy]   = useState(false);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.title.trim()) return;
+    setBusy(true);
+    await onSubmit({ ...form, dueInDays: form.dueInDays === '' ? null : Number(form.dueInDays) });
+    setForm(EMPTY_FORM);
+    setOpen(false);
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ marginBottom:12 }}>
+      <button onClick={() => setOpen(v => !v)}
+        style={{ ...BTN(open ? '#e8f0fe' : C.navy, open ? C.navy : '#fff'), fontSize:11, padding:'6px 14px', border: open ? `1px solid ${C.navy}` : 'none' }}>
+        {open ? '✕ Cancel' : '＋ Add Task'}
+      </button>
+
+      {open && (
+        <div style={{ background:'#fff', border:`1px solid #dde1e7`, borderRadius:8,
+          padding:16, marginTop:8, boxShadow:'0 2px 8px rgba(0,0,0,.07)' }}>
+
+          {/* Title */}
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Title</div>
+            <input style={INP} placeholder="e.g. Call supplier about panel pricing"
+              value={form.title} onChange={e => set('title', e.target.value)} autoFocus />
+          </div>
+
+          {/* Row: type / priority / list / due */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:10 }}>
+            {[
+              { label:'Type', key:'type', opts: Object.keys(TASK_TYPES).map(k => ({ v:k, l:TASK_TYPES[k].label })) },
+              { label:'Priority', key:'priority', opts:[{v:'critical',l:'Critical'},{v:'high',l:'High'},{v:'medium',l:'Medium'},{v:'low',l:'Low'}] },
+              { label:'List', key:'listTarget', opts: Object.entries(LIST_TARGETS).map(([k,v])=>({v:k,l:v.label})) },
+            ].map(({ label, key, opts }) => (
+              <div key={key}>
+                <div style={{ fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>{label}</div>
+                <select style={INP} value={form[key]} onChange={e => set(key, e.target.value)}>
+                  {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </div>
+            ))}
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Due (days)</div>
+              <input style={INP} type="number" min="0" placeholder="—"
+                value={form.dueInDays} onChange={e => set('dueInDays', e.target.value)} />
+            </div>
+          </div>
+
+          {/* Description */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Description (optional)</div>
+            <textarea style={{ ...INP, resize:'vertical', minHeight:56 }} placeholder="Context, next steps, notes…"
+              value={form.description} onChange={e => set('description', e.target.value)} />
+          </div>
+
+          <button onClick={submit} disabled={busy || !form.title.trim()}
+            style={{ ...BTN(form.title.trim() ? C.teal : '#ccc'), opacity: form.title.trim() ? 1 : .6 }}>
+            {busy ? 'Pushing…' : '⬆ Push to Trello'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Task Card ──────────────────────────────────────────────────────────────────
 const TaskCard = ({ task, onPush, onCopy, onComplete, pushing, trelloReady }) => {
   const [expanded, setExpanded] = useState(false);
@@ -386,6 +461,28 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     }
   };
 
+  const handleAdHocSubmit = async (form) => {
+    if (!trelloReady) return;
+    const newTask = {
+      id:          `adhoc-${Date.now()}`,
+      title:       form.title.trim(),
+      description: form.description.trim(),
+      type:        form.type,
+      priority:    form.priority,
+      listTarget:  form.listTarget,
+      dueInDays:   form.dueInDays,
+      source:      'adhoc',
+      sourceRef:   null,
+      onComplete:  {},
+      pushed:      false,
+      trelloCardId:null,
+      completed:   false,
+      createdAt:   Date.now(),
+    };
+    newTask.assignees = getTaskAssignees(newTask);
+    await handlePush(newTask);
+  };
+
   const handleBackfill = async () => {
     if (!trelloReady) return;
     setBackfilling(true); setSyncMsg('');
@@ -504,6 +601,9 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
           <FeedbackPanel completedTasks={completedWithFeedback} onUpdateCRM={handleApplyFeedback} leads={leads} />
         </div>
       )}
+
+      {/* Ad-hoc task creator */}
+      {trelloReady && <AdHocTaskForm onSubmit={handleAdHocSubmit} />}
 
       {/* Task list */}
       {(config) && (
