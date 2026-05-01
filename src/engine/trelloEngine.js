@@ -301,6 +301,9 @@ const trelloReq = async (method, path, body, config) => {
 export const trelloGetBoardLists = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/lists`, null, config);
 
+export const trelloGetBoardUrl = (config) =>
+  trelloReq('GET', `/boards/${config.boardId}?fields=shortUrl,name`, null, config);
+
 export const trelloGetBoardLabels = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/labels`, null, config);
 

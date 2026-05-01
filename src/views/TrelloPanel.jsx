@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   generateTasks, pushTask, ensureLabels, validateTrelloConnection,
-  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards,
+  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards, trelloGetBoardUrl,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS,
 } from '../engine/trelloEngine';
@@ -240,6 +240,7 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   const [copied, setCopied]       = useState(null);
   const [filter, setFilter]       = useState('pending'); // 'pending' | 'pushed' | 'all'
   const [lastSynced, setLastSynced] = useState(null);
+  const [boardUrl, setBoardUrl]     = useState(null);
 
   const trelloReady = !!(
     config?.apiKey && config?.apiToken && config?.boardId &&
@@ -335,6 +336,12 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
     return () => clearInterval(id);
   }, [trelloReady, handleSync]);
 
+  // Fetch board URL once when Trello becomes ready
+  useEffect(() => {
+    if (!trelloReady || boardUrl) return;
+    trelloGetBoardUrl(config).then(b => setBoardUrl(b.shortUrl)).catch(() => {});
+  }, [trelloReady, config, boardUrl]);
+
   const handleApplyFeedback = (completedTask, lead) => {
     if (completedTask.onComplete?.crmNextStage) {
       onCRMUpdate(lead.id, completedTask.onComplete.crmNextStage);
@@ -378,7 +385,15 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
           </div>
           <div style={{ fontSize:11, color:'#888' }}>
             {trelloReady
-              ? `Board connected · ${pendingCount} tasks pending push · ${pushedCount} in Trello`
+              ? <>
+                  Board connected · {pendingCount} tasks pending push · {pushedCount} in Trello
+                  {boardUrl && (
+                    <a href={boardUrl} target="_blank" rel="noopener noreferrer"
+                      style={{ marginLeft:8, color:'#C8991A', textDecoration:'none', fontWeight:700 }}>
+                      ↗ Open Board
+                    </a>
+                  )}
+                </>
               : 'Not connected — connect Trello to push tasks'}
           </div>
         </div>
