@@ -341,14 +341,27 @@ export const ensureLabels = async (config) => {
 };
 
 // ── PUSH TASK TO TRELLO ───────────────────────────────────────────────────────
+// Embeds a fos:<taskId> marker in every card description so we can detect
+// duplicates by scanning board cards — even across devices or after clearing
+// localStorage.
 
-export const pushTask = async (config, task, listMapping, labelMapping) => {
-  const listId   = listMapping[task.listTarget];
-  const labelId  = labelMapping[task.type];
+const FOS_MARKER = (taskId) => `\n\n<!-- fos:${taskId} -->`;
+const extractFosId = (desc = '') => { const m = desc.match(/<!-- fos:([^>]+) -->/); return m ? m[1] : null; };
+
+// Pass pre-fetched boardCards to avoid one extra API call per push when
+// pushing in bulk (pushAll fetches once and threads it through).
+export const pushTask = async (config, task, listMapping, labelMapping, boardCards = null) => {
+  const listId  = listMapping[task.listTarget];
+  const labelId = labelMapping[task.type];
   if (!listId) throw new Error(`No list mapped for target "${task.listTarget}"`);
+
+  const cards = boardCards ?? await trelloGetBoardCards(config);
+  const existing = cards.find(c => extractFosId(c.desc) === task.id);
+  if (existing) return existing.id;
+
   const card = await trelloCreateCard(config, {
     title:       task.title,
-    description: task.description,
+    description: task.description + FOS_MARKER(task.id),
     listId,
     labelIds:    labelId ? [labelId] : [],
     dueInDays:   task.dueInDays,

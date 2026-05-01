@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   generateTasks, pushTask, ensureLabels, validateTrelloConnection,
-  syncCompletedCards, trelloGetBoardLists,
+  syncCompletedCards, trelloGetBoardLists, trelloGetBoardCards,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS,
 } from '../engine/trelloEngine';
@@ -263,21 +263,31 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   });
 
   const pushAll = async () => {
-    for (const t of pendingTasks.filter(pt => !pt.pushed)) {
-      await handlePush(t);
+    const batch = pendingTasks.filter(pt => !pt.pushed);
+    if (!batch.length) return;
+    let lm = labelMap;
+    if (Object.keys(lm).length === 0) {
+      lm = await ensureLabels(config);
+      setLabelMap(lm);
+    }
+    // Fetch board cards once for the whole batch — dedup check reuses this
+    let boardCards = null;
+    try { boardCards = await trelloGetBoardCards(config); } catch { /* fall through to per-task fetch */ }
+    for (const t of batch) {
+      await handlePush(t, lm, boardCards);
     }
   };
 
-  const handlePush = useCallback(async (task) => {
+  const handlePush = useCallback(async (task, existingLabelMap, boardCards) => {
     if (!trelloReady) { taskToClipboard(task); return; }
     setPushing(task.id);
     try {
-      let lm = labelMap;
+      let lm = existingLabelMap ?? labelMap;
       if (Object.keys(lm).length === 0) {
         lm = await ensureLabels(config);
         setLabelMap(lm);
       }
-      const cardId = await pushTask(config, task, config.listMapping, lm);
+      const cardId = await pushTask(config, task, config.listMapping, lm, boardCards ?? null);
       const next = [...taskQueue.filter(t => t.id !== task.id), { ...task, pushed: true, trelloCardId: cardId }];
       setTaskQueue(next);
       saveTaskQueue(next);
