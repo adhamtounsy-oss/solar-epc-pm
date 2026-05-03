@@ -288,17 +288,57 @@ export const computeCashProjection = (s, crm) => {
   const { cash, monthlyBurn, headcount } = s;
   const { numEngineers = 0, numTechnicians = 0 } = headcount;
 
-  // Actual burn = base + salaries
   const engSalary  = numEngineers   * 20000;
   const techSalary = numTechnicians * 10000;
   const actualBurn = (monthlyBurn || 75000) + engSalary + techSalary;
 
-  // Expected deposits from active pipeline
-  const depositExpected = crm.proposalsOut > 0
-    ? crm.proposalsOut * 300000 * 0.30  // rough: 30% of avg 300K deal, probability-weighted
-    : 0;
+  // Read actual project milestones for expected cash inflows
+  let allProjs = [];
+  try { allProjs = JSON.parse(localStorage.getItem('projects_v1') || '[]'); } catch {}
 
-  const milestoneRevenue = crm.contractsSigned * 500000 * 0.70; // final 70% payment on commissioning
+  // Map pending/invoiced milestones to the calendar month they're expected to land
+  const inflowByMonth = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const today = new Date();
+  const monthStart = (mo) => {
+    const d = new Date(today.getFullYear(), today.getMonth() + mo - 1, 1);
+    return d;
+  };
+  const monthEnd = (mo) => new Date(today.getFullYear(), today.getMonth() + mo, 0);
+  const toMonth  = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    for (let m = 1; m <= 6; m++) {
+      if (d >= monthStart(m) && d <= monthEnd(m)) return m;
+    }
+    return null;
+  };
+
+  for (const proj of allProjs) {
+    const cv = Number(proj.contractValue) || 0;
+    for (const ms of (proj.milestones || [])) {
+      if (ms.status === 'received') continue;
+      const amount = Number(ms.amount) || (cv * (Number(ms.pct) || 0) / 100);
+      if (!amount) continue;
+      let mo = null;
+      if (ms.dueDate) {
+        mo = toMonth(ms.dueDate);
+      } else if (ms.invoicedDate) {
+        const expected = new Date(ms.invoicedDate);
+        expected.setDate(expected.getDate() + 14);
+        mo = toMonth(expected.toISOString().split('T')[0]);
+      }
+      if (mo !== null) inflowByMonth[mo] += amount;
+    }
+  }
+
+  // Fall back to rough CRM estimates when no project milestone data exists
+  const hasProjectInflows = Object.values(inflowByMonth).some(v => v > 0);
+  const depositExpected   = !hasProjectInflows && crm.proposalsOut > 0
+    ? crm.proposalsOut * 300000 * 0.30
+    : 0;
+  const milestoneRevenue  = !hasProjectInflows
+    ? crm.contractsSigned * 500000 * 0.70
+    : 0;
 
   const months = [];
   let balance = Number(cash) || 0;
@@ -307,15 +347,17 @@ export const computeCashProjection = (s, crm) => {
 
   for (let m = 1; m <= 6; m++) {
     balance -= actualBurn;
-    // Assume deposit arrives month 2 if proposals are out
-    if (m === 2 && !depositCaptured && depositExpected > 0) {
-      balance += depositExpected;
-      depositCaptured = true;
-    }
-    // Assume commissioning milestone month 4 if contract signed
-    if (m === 4 && !milestoneCaptured && milestoneRevenue > 0) {
-      balance += milestoneRevenue;
-      milestoneCaptured = true;
+    if (hasProjectInflows) {
+      balance += (inflowByMonth[m] || 0);
+    } else {
+      if (m === 2 && !depositCaptured && depositExpected > 0) {
+        balance += depositExpected;
+        depositCaptured = true;
+      }
+      if (m === 4 && !milestoneCaptured && milestoneRevenue > 0) {
+        balance += milestoneRevenue;
+        milestoneCaptured = true;
+      }
     }
     months.push({ month: m, cash: Math.round(balance) });
   }
@@ -376,12 +418,12 @@ export const computeComplianceStatus = (s, day) => {
     blockingWhat: 'Legal authority to execute grid-tie projects',
   });
 
-  // Bank account
+  // Bank account — requires GAFI commercial register (banks mandate it for business accounts)
   items.push({
     id: 'C-BANK',
     label: 'Corporate Bank Account',
-    status: s.bankAccountOpen ? 'done' : day >= 14 ? 'critical' : 'warn',
-    detail: s.bankAccountOpen ? 'Open ✓' : 'Required for client payments and deposit collection.',
+    status: s.bankAccountOpen ? 'done' : !s.gafiRegistered ? 'pending' : day >= 14 ? 'critical' : 'warn',
+    detail: s.bankAccountOpen ? 'Open ✓' : !s.gafiRegistered ? 'Complete GAFI registration first — banks require commercial register to open a business account.' : 'Required for client payments and deposit collection.',
     blocking: !s.bankAccountOpen,
     blockingWhat: 'Cannot collect client deposits without business account',
   });
@@ -447,22 +489,22 @@ export const computeComplianceStatus = (s, day) => {
     blockingWhat: 'issuing any VAT invoice to clients',
   });
 
-  // Engineers' Syndicate company registration
+  // Engineers' Syndicate company registration — requires GAFI commercial register
   items.push({
     id: 'C-SYND',
     label: "Engineers' Syndicate — Company Registration",
-    status: s.syndicateRegistered ? 'done' : day >= 21 ? 'warn' : 'pending',
-    detail: s.syndicateRegistered ? 'Registered ✓' : 'Register company under Syndicate membership. Required for NREA Bronze application.',
+    status: s.syndicateRegistered ? 'done' : !s.gafiRegistered ? 'pending' : day >= 21 ? 'warn' : 'pending',
+    detail: s.syndicateRegistered ? 'Registered ✓' : !s.gafiRegistered ? 'Complete GAFI registration first — Syndicate requires a commercial register.' : 'Register company under Syndicate membership. Required for NREA Bronze application.',
     blocking: !s.syndicateRegistered,
     blockingWhat: 'NREA Bronze application (C-NREA)',
   });
 
-  // DISCO contractor pre-registration
+  // DISCO contractor pre-registration — requires NREA certificate first
   items.push({
     id: 'C-DISCO-REG',
     label: 'DISCO Contractor Pre-Registration',
-    status: s.discoPreRegistered ? 'done' : day >= 45 ? 'warn' : 'pending',
-    detail: s.discoPreRegistered ? 'Pre-registered ✓' : 'Contact local DISCO (EEDCS / UEDCO) to register as an approved solar contractor. Required before net-metering submissions.',
+    status: s.discoPreRegistered ? 'done' : !s.nreaSubmitted ? 'pending' : day >= 45 ? 'warn' : 'pending',
+    detail: s.discoPreRegistered ? 'Pre-registered ✓' : !s.nreaSubmitted ? 'Complete NREA qualification first — DISCO only pre-registers NREA-certified contractors.' : 'Contact local DISCO (EEDCS / UEDCO) to register as an approved solar contractor. Required before net-metering submissions.',
     blocking: !s.discoPreRegistered,
     blockingWhat: 'net-metering applications, DISCO submissions for any project',
   });

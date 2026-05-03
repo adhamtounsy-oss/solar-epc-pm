@@ -118,6 +118,7 @@ const NEXT_STAGE = {
 const CRM_CHAIN = [
   { stage: 'site_visit_scheduled',  label: 'Site visit' },
   { stage: 'site_visit_completed',  label: 'Propose feasibility study' },
+  { stage: 'feasibility_proposed',  label: 'Close feasibility study sale' },
   { stage: 'feasibility_sold',      label: 'Deliver feasibility study' },
   { stage: 'feasibility_delivered', label: 'Send EPC proposal' },
   { stage: 'proposal_sent',         label: 'Follow up on proposal' },
@@ -183,6 +184,9 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
   const allProjs = (() => { try { return JSON.parse(localStorage.getItem('projects_v1') || '[]'); } catch { return []; } })();
 
   const { day, crm, compliance, hiring, primaryDecision, mode } = engineState;
+
+  // Compliance lookup for structural gates — keyed by item id (e.g. 'C-NREA', 'C-DISCO-REG')
+  const compMap = Object.fromEntries((compliance?.items || []).map(i => [i.id, i]));
 
   // ── 1. CRM-driven tasks (per lead stage) ──────────────────────────────────
   // Each description is pre-filled from the Stage Dossier so the person
@@ -251,6 +255,21 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         `Site visit done. Follow up within 48h.${contactLine}${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.${c2}`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_proposed' }
+      ));
+    }
+
+    if (lead.stage === 'feasibility_proposed') {
+      const recSize   = sSv.recommendedSizeKwp        ? `\nRecommended size from visit: ${sSv.recommendedSizeKwp} kWp` : '';
+      const annSav    = sSv.estimatedAnnualSavingsEGP  ? `\nEst. annual savings: EGP ${Number(sSv.estimatedAnnualSavingsEGP).toLocaleString()} — anchor for study fee` : '';
+      const payback   = sSv.roughPaybackYears          ? `\nRough payback: ~${sSv.roughPaybackYears} yr` : '';
+      const netMeter  = sSv.netMeteringEligible        ? `\n✓ Net metering eligible — include in ROI pitch` : '';
+      const { step: sFp, ctx: cFp } = crmChain('feasibility_proposed');
+      add(task(
+        `crm-close-fs-${lead.id}`,
+        `${sFp}Close feasibility study sale — ${name}`,
+        `Feasibility proposed. Follow up to collect payment and confirm scope.${contactLine}${recSize}${annSav}${payback}${netMeter}\nFee: EGP 3,000–5,000 (credited against EPC contract).\nCollect deposit before analysis starts. Issue invoice on verbal confirmation.\nGoal: deposit received + delivery date agreed this week.${cFp}`,
+        'SALES', 'high', 'this-week', 5, 'crm', lead.id,
+        { crmLeadId: lead.id, crmNextStage: 'feasibility_sold' }
       ));
     }
 
@@ -373,18 +392,27 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const brkrLine   = sSv.mainBreakerAmps       ? `\nMain breaker: ${sSv.mainBreakerAmps}A · DB: ${sSv.dbPanelBrand||'TBC'}` : '';
       const gridLine   = sSv.gridPhaseConfirmed    ? `\nGrid: ${sSv.gridPhaseConfirmed} · ${sSv.feederVoltage||'voltage TBC'}` : '';
       const facilsLine = sSv.facilitiesContactName ? `\nOn-site contact: ${sSv.facilitiesContactName}${sSv.facilitiesContactPhone?' / '+sSv.facilitiesContactPhone:''}` : '';
+      // Warn if no technician is on the team yet — installation cannot proceed without one
+      const techWarn   = (hiring || []).some(h => h.role.includes('Technician'))
+        ? `\n⚠ No technician or subcontractor confirmed — arrange installation team before mobilisation date`
+        : '';
       add(task(
         `exec-eng-brief-${lead.id}`,
         `[Exec B1] Brief engineer & confirm mobilization — ${name}`,
-        `Contract won. Brief engineer and lock mobilization date.${contactLine}${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.${WON_CHAIN_ENG}`,
+        `Contract won. Brief engineer and lock mobilization date.${contactLine}${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}${techWarn}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.${WON_CHAIN_ENG}`,
         'TECHNICAL', 'critical', 'in-progress', 1, 'crm', lead.id,
         {}
       ));
 
       // Track A step 2 — only after deposit is marked Received in Projects tab.
+      // Additionally gated on NREA certificate + DISCO contractor pre-registration:
+      // DISCO rejects applications from non-certified and non-pre-registered contractors.
       // The 5-second leads poll in ControlCenter re-reads projects_v1, so these
       // tasks appear in the Trello queue automatically within 5s of the update.
       if (depositReceived) {
+        const nreaCertDone = compMap['C-NREA']?.status === 'done';
+        const discoPreDone = compMap['C-DISCO-REG']?.status === 'done';
+
         const discoName  = sSv.disco || 'DISCO';
         const nmStatus   = sSv.netMeteringEligible === true
           ? `\n✓ Net metering eligibility confirmed at site visit`
@@ -394,13 +422,25 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         const addrLine   = sSvSch.siteAddress ? `\nSite: ${sSvSch.siteAddress}` : '';
         const panelSpec  = sFd.panelBrandModel ? `\nPanel for spec sheet: ${sFd.panelBrandModel}` : '';
         const feederLine = sSv.feederVoltage   ? `\nFeeder: ${sSv.feederVoltage} · ${sSv.gridPhaseConfirmed||'phase TBC'}` : '';
-        add(task(
-          `exec-disco-${lead.id}`,
-          `[Exec A2] Submit ${discoName} net-metering application — ${name}`,
-          `Deposit confirmed. Submit ${discoName} application now.${nmStatus}${sysLine}${addrLine}${panelSpec}${feederLine}\nDocuments: system spec sheet, site plan, NREA certificate copy, commercial register.\nGet reference number — log in CRM notes.${WON_CHAIN_POST_DEPOSIT}`,
-          'COMPLIANCE', 'critical', 'this-week', 1, 'crm', lead.id,
-          { fosStateUpdate: { discoSubmitted: true } }
-        ));
+
+        if (nreaCertDone && discoPreDone) {
+          add(task(
+            `exec-disco-${lead.id}`,
+            `[Exec A2] Submit ${discoName} net-metering application — ${name}`,
+            `Deposit confirmed. Submit ${discoName} application now.${nmStatus}${sysLine}${addrLine}${panelSpec}${feederLine}\nDocuments: system spec sheet, site plan, NREA certificate copy, commercial register.\nGet reference number — log in CRM notes.${WON_CHAIN_POST_DEPOSIT}`,
+            'COMPLIANCE', 'critical', 'this-week', 1, 'crm', lead.id,
+            { fosStateUpdate: { discoSubmitted: true } }
+          ));
+        } else {
+          // Surface a blocked notice — same prune effect auto-archives this when gates clear
+          add(task(
+            `exec-disco-blocked-${lead.id}`,
+            `[Exec A2] DISCO application blocked — complete compliance first — ${name}`,
+            `Deposit received. DISCO submission blocked by missing compliance prerequisites.\n\n── Compliance Prerequisites ─────────────────\n${nreaCertDone ? '✓' : '→'} NREA qualification certificate (DISCO rejects applications without it)\n${discoPreDone ? '✓' : '→'} DISCO contractor pre-registration (company must be on approved contractor list)\n  Submit ${discoName} net-metering application\n\nMark prerequisites done in Setup → Compliance. DISCO task appears automatically.${WON_CHAIN_POST_DEPOSIT}`,
+            'COMPLIANCE', 'critical', 'this-week', 0, 'crm', lead.id,
+            {}
+          ));
+        }
 
         const panelLine = sFd.panelBrandModel     ? `\nPanels: ${sFd.panelBrandModel}` : '';
         const invLine   = sFd.inverterBrandModel  ? `\nInverter: ${sFd.inverterBrandModel}` : '';
@@ -462,23 +502,24 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     }
 
     if (item.id === 'C-NREA' && item.status !== 'done') {
-      // NREA requires capital proof (bank account) and a Syndicate-registered engineer.
-      // Gate on both prerequisites to avoid a wasted submission attempt.
+      // NREA requires: bank account (capital proof), Syndicate company registration,
+      // and a Syndicate-registered engineer CV. Gate on all three.
       const bankDone = compItems.some(i => i.id === 'C-BANK' && i.status === 'done');
       const engDone  = compItems.some(i => i.id === 'C-ENG'  && i.status === 'done');
-      if (bankDone && engDone) {
+      const syndDone = compMap['C-SYND']?.status === 'done';
+      if (bankDone && engDone && syndDone) {
         add(task(
           'comp-nrea', 'Submit NREA Bronze qualification dossier',
-          'Required for all DISCO connections. No certificate = no revenue.\nFee: EGP 5,000 (Bronze) + EGP 5,000 review.\nDocuments: commercial register, capital proof, engineer CV (Syndicate), equipment specs.\nSubmit paper + electronic to NREA Technical Affairs.\n\n── Setup Chain ──────────────────────────────\n✓ Bank account open\n✓ Engineer hired (Syndicate-registered)\n→ Submit NREA dossier\n  Await NREA certificate (~30 days)',
+          'Required for all DISCO connections. No certificate = no revenue.\nFee: EGP 5,000 (Bronze) + EGP 5,000 review.\nDocuments: commercial register, capital proof, Syndicate company registration, engineer CV (Syndicate), equipment specs.\nSubmit paper + electronic to NREA Technical Affairs.\n\n── Setup Chain ──────────────────────────────\n✓ Bank account open (capital proof)\n✓ Engineers\' Syndicate company registered\n✓ Engineer hired (Syndicate-registered)\n→ Submit NREA Bronze dossier\n  Await NREA certificate (~30 days)',
           'COMPLIANCE', item.status === 'critical' ? 'critical' : 'high', 'this-week', 7, 'compliance', 'C-NREA',
           { fosStateUpdate: { nreaSubmitted: true } }
         ));
       } else {
-        // Surface a blocked notice so the gap is visible, but don't push a premature NREA task
+        const missing = !bankDone ? 'open bank account first' : !syndDone ? 'register with Engineers\' Syndicate first' : 'hire engineer first';
         add(task(
           'comp-nrea-blocked',
-          `NREA submission blocked — ${!bankDone ? 'open bank account first' : 'hire engineer first'}`,
-          `Cannot submit NREA dossier until prerequisites are complete.\n\n── Setup Chain ──────────────────────────────\n${bankDone ? '✓' : '→'} Open corporate bank account (capital proof required)\n${engDone  ? '✓' : '→'} Hire Syndicate-registered engineer (CV required)\n  Submit NREA Bronze dossier\n  Await NREA certificate (~30 days)\n\nComplete the blocking step above first.`,
+          `NREA submission blocked — ${missing}`,
+          `Cannot submit NREA dossier until prerequisites are complete.\n\n── Setup Chain ──────────────────────────────\n${bankDone ? '✓' : '→'} Open corporate bank account (capital proof required)\n${syndDone ? '✓' : '→'} Register company with Engineers\' Syndicate (required for company-level NREA application)\n${engDone  ? '✓' : '→'} Hire Syndicate-registered engineer (CV required in dossier)\n  Submit NREA Bronze dossier\n  Await NREA certificate (~30 days)\n\nComplete the blocking step above first.`,
           'COMPLIANCE', 'high', 'this-week', 0, 'compliance', 'C-NREA',
           {}
         ));
