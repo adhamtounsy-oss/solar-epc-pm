@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SalesIntelView } from './SalesIntelView';
 
 const N = '#0D2137';
 const G = '#C8991A';
@@ -278,6 +279,7 @@ function PlaybookCard({ pb, expanded, onToggle }) {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export function PlaybooksView() {
+  const [view, setView]         = useState('sops');  // 'sops' | 'intel'
   const [expanded, setExpanded] = useState({});
   const [filter, setFilter]     = useState('All');
 
@@ -288,39 +290,63 @@ export function PlaybooksView() {
   return (
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
 
-      <div style={{ background: '#fff', borderRadius: 6, padding: '12px 16px', border: '1px solid #e0e0e0', marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: N, marginBottom: 4 }}>Field Playbooks</div>
-        <div style={{ fontSize: 11, color: '#888', lineHeight: 1.6 }}>
-          Step-by-step guides for every stage of the solar EPC process. Designed to be used on-site, in meetings, and by future employees who need to execute without supervision.
-        </div>
-      </div>
-
-      {/* Phase filter */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {['All', ...PHASES].map(p => (
-          <button key={p} onClick={() => setFilter(p)}
-            style={{ padding: '4px 12px', background: filter === p ? (PHASE_COLORS[p] || N) : '#f0f2f5', color: filter === p ? '#fff' : '#555', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-            {p}
-          </button>
-        ))}
-      </div>
-
-      {/* Expand all / collapse all */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setExpanded(Object.fromEntries(shown.map(p => [p.id, true])))}
-          style={{ padding: '4px 12px', background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Expand All
+      {/* View toggle */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <button
+          onClick={() => setView('sops')}
+          style={{ padding: '6px 16px', background: view === 'sops' ? N : '#f0f2f5', color: view === 'sops' ? '#fff' : '#555', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Field SOPs
         </button>
-        <button onClick={() => setExpanded({})}
-          style={{ padding: '4px 12px', background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Collapse All
+        <button
+          onClick={() => setView('intel')}
+          style={{ padding: '6px 16px', background: view === 'intel' ? T : '#f0f2f5', color: view === 'intel' ? '#fff' : '#555', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Sales Intelligence
         </button>
-        <span style={{ fontSize: 10, color: '#bbb', alignSelf: 'center' }}>{shown.length} playbooks</span>
       </div>
 
-      {shown.map(pb => (
-        <PlaybookCard key={pb.id} pb={pb} expanded={!!expanded[pb.id]} onToggle={() => toggle(pb.id)} />
-      ))}
+      {/* ── Sales Intelligence ── */}
+      {view === 'intel' && <SalesIntelView />}
+
+      {/* ── Field SOPs ── */}
+      {view === 'sops' && (
+        <>
+          <div style={{ background: '#fff', borderRadius: 6, padding: '12px 16px', border: '1px solid #e0e0e0', marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: N, marginBottom: 4 }}>Field Playbooks</div>
+            <div style={{ fontSize: 11, color: '#888', lineHeight: 1.6 }}>
+              Step-by-step guides for every stage of the solar EPC process. Designed to be used on-site, in meetings, and by future employees who need to execute without supervision.
+            </div>
+          </div>
+
+          {/* Phase filter */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+            {['All', ...PHASES].map(p => (
+              <button key={p} onClick={() => setFilter(p)}
+                style={{ padding: '4px 12px', background: filter === p ? (PHASE_COLORS[p] || N) : '#f0f2f5', color: filter === p ? '#fff' : '#555', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                {p}
+              </button>
+            ))}
+          </div>
+
+          {/* Expand all / collapse all */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <button onClick={() => setExpanded(Object.fromEntries(shown.map(p => [p.id, true])))}
+              style={{ padding: '4px 12px', background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Expand All
+            </button>
+            <button onClick={() => setExpanded({})}
+              style={{ padding: '4px 12px', background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Collapse All
+            </button>
+            <span style={{ fontSize: 10, color: '#bbb', alignSelf: 'center' }}>{shown.length} playbooks</span>
+          </div>
+
+          {shown.map(pb => (
+            <PlaybookCard key={pb.id} pb={pb} expanded={!!expanded[pb.id]} onToggle={() => toggle(pb.id)} />
+          ))}
+        </>
+      )}
     </div>
   );
 }

@@ -427,6 +427,46 @@ export const computeComplianceStatus = (s, day) => {
     blockingWhat: null,
   });
 
+  // GAFI Commercial Registry
+  items.push({
+    id: 'C-GAFI',
+    label: 'GAFI Commercial Registry',
+    status: s.gafiRegistered ? 'done' : day >= 7 ? 'critical' : 'warn',
+    detail: s.gafiRegistered ? 'Registered ✓' : 'Fast Lane: 72h turnaround. Required before any invoicing, banking, or NREA application.',
+    blocking: !s.gafiRegistered,
+    blockingWhat: 'bank account, NREA application, all invoicing',
+  });
+
+  // Tax Registration
+  items.push({
+    id: 'C-TAX',
+    label: 'Tax Registration (ETA portal)',
+    status: s.taxRegistered ? 'done' : s.gafiRegistered && day >= 10 ? 'warn' : 'pending',
+    detail: s.taxRegistered ? 'Registered ✓' : s.gafiRegistered ? 'Register at eta.gov.eg — required before first invoice.' : 'Complete GAFI registration first.',
+    blocking: !s.taxRegistered && s.gafiRegistered,
+    blockingWhat: 'issuing any VAT invoice to clients',
+  });
+
+  // Engineers' Syndicate company registration
+  items.push({
+    id: 'C-SYND',
+    label: "Engineers' Syndicate — Company Registration",
+    status: s.syndicateRegistered ? 'done' : day >= 21 ? 'warn' : 'pending',
+    detail: s.syndicateRegistered ? 'Registered ✓' : 'Register company under Syndicate membership. Required for NREA Bronze application.',
+    blocking: !s.syndicateRegistered,
+    blockingWhat: 'NREA Bronze application (C-NREA)',
+  });
+
+  // DISCO contractor pre-registration
+  items.push({
+    id: 'C-DISCO-REG',
+    label: 'DISCO Contractor Pre-Registration',
+    status: s.discoPreRegistered ? 'done' : day >= 45 ? 'warn' : 'pending',
+    detail: s.discoPreRegistered ? 'Pre-registered ✓' : 'Contact local DISCO (EEDCS / UEDCO) to register as an approved solar contractor. Required before net-metering submissions.',
+    blocking: !s.discoPreRegistered,
+    blockingWhat: 'net-metering applications, DISCO submissions for any project',
+  });
+
   const criticalCount = items.filter(i => i.status === 'critical').length;
   const blocking = items.filter(i => i.blocking);
 
@@ -556,11 +596,34 @@ export const computeBreakNext = (day, crm, cashProjection, compliance, mode) => 
     });
   }
 
+  // Risk register: surface high-probability items (≥60%) not already covered by engine risks
+  try {
+    const raw = localStorage.getItem('risk_register_v1');
+    if (raw) {
+      const regRisks = JSON.parse(raw);
+      const highRisks = regRisks
+        .filter(r => (r.probability >= 60) && (Number(r.impactEGP) || 0) > 0)
+        .sort((a,b) => (b.probability/100*(Number(b.impactEGP)||0)) - (a.probability/100*(Number(a.impactEGP)||0)))
+        .slice(0, 2); // max 2 from register to avoid crowding out engine risks
+      for (const r of highRisks) {
+        const ev = Math.round(r.probability / 100 * Number(r.impactEGP));
+        const evStr = ev >= 1000000 ? `EGP ${(ev/1e6).toFixed(1)}M` : ev >= 1000 ? `EGP ${Math.round(ev/1000)}K` : `EGP ${ev.toLocaleString()}`;
+        risks.push({
+          id: `BN-RISK-${r.id}`,
+          urgency: r.probability >= 70 ? 'high' : 'medium',
+          title: r.label,
+          description: `${r.category} risk — P: ${r.probability}% · Impact: ${ev >= 1000 ? evStr : `EGP ${Number(r.impactEGP).toLocaleString()}`} · Expected value: ${evStr}`,
+          action: r.mitigation || 'Review mitigation strategy in Setup → Risk Register.',
+        });
+      }
+    }
+  } catch {}
+
   // Sort: critical → high → medium
   const order = { critical: 0, high: 1, medium: 2 };
   risks.sort((a, b) => (order[a.urgency] || 3) - (order[b.urgency] || 3));
 
-  return risks.slice(0, 4);
+  return risks.slice(0, 6);
 };
 
 // ── Decision Engine (the most important output) ───────────────────────────────
@@ -877,15 +940,20 @@ export const INIT_FOS_STATE = {
     numTechnicians: 0,
   },
   // Compliance milestones
-  bankAccountOpen:    false,
-  engineerHired:      false,
-  lawyerEngaged:      false,
-  nreaSubmitted:      false,
-  egyptERASubmitted:  false,
-  fxAlertActive:      false,
-  depositCollected:   false,
-  discoSubmitted:     false,
-  overdraftActive:    false,
-  depositRefused:     false,
-  nreaReportOverdue:  false,
+  bankAccountOpen:      false,
+  engineerHired:        false,
+  lawyerEngaged:        false,
+  nreaSubmitted:        false,
+  egyptERASubmitted:    false,
+  fxAlertActive:        false,
+  depositCollected:     false,
+  discoSubmitted:       false,
+  overdraftActive:      false,
+  depositRefused:       false,
+  nreaReportOverdue:    false,
+  // Setup task flags
+  gafiRegistered:       false,  // T-L2: GAFI Commercial Registry
+  taxRegistered:        false,  // T-L3: Tax Registration (ETA)
+  syndicateRegistered:  false,  // T-P1: Engineers' Syndicate company registration
+  discoPreRegistered:   false,  // T-R3: DISCO contractor pre-registration
 };

@@ -132,6 +132,18 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     const value = lead.dealValue ? ` (EGP ${Number(lead.dealValue).toLocaleString()})` : '';
     const kw    = lead.systemSizeKW ? ` · ${lead.systemSizeKW}kW` : '';
 
+    // Decision-maker contact — injected into every actionable card so the
+    // card is self-contained and can be actioned without opening the CRM.
+    const contactLine = (() => {
+      const parts = [
+        lead.contactPerson,
+        lead.contactRole,
+        lead.contactPhone  && `📞 ${lead.contactPhone}`,
+        lead.contactEmail  && `✉ ${lead.contactEmail}`,
+      ].filter(Boolean);
+      return parts.length ? `\nDM contact: ${parts.join(' · ')}` : '';
+    })();
+
     // Stage Dossier shortcuts — available whenever the dossier has been filled
     const sd     = lead.stageData || {};
     const sCont  = sd.contacted               || {};
@@ -158,7 +170,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-visit-${lead.id}`,
         `Site visit — ${name}`,
-        `Conduct qualifying site visit.${timeSlot}${address}${onSiteCt}${access}${billLine}${phaseConf}${dmLine}${diesel}\nSystem: ${lead.systemSizeKW||'?'}kW${value}.\nBring: smartphone meter app, tape measure, ≥10 photos, load data request, site checklist.\nGoal: roof area + shading + DISCO + electrical panel rating + confirm decision maker present.`,
+        `Conduct qualifying site visit.${timeSlot}${address}${onSiteCt}${access}${contactLine}${billLine}${phaseConf}${dmLine}${diesel}\nSystem: ${lead.systemSizeKW||'?'}kW${value}.\nBring: smartphone meter app, tape measure, ≥10 photos, load data request, site checklist.\nGoal: roof area + shading + DISCO + electrical panel rating + confirm decision maker present.`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'site_visit_completed' }
       ));
@@ -173,7 +185,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-propose-fs-${lead.id}`,
         `Propose paid feasibility study — ${name}`,
-        `Site visit done. Follow up within 48h.${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.`,
+        `Site visit done. Follow up within 48h.${contactLine}${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_proposed' }
       ));
@@ -193,7 +205,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-deliver-fs-${lead.id}`,
         `Deliver feasibility study — ${name}`,
-        `Feasibility deposit received. Deliver within 14 days.${deposit}${deadline}${assignee}\n\nPVsyst inputs:${pvSize}${pvRoof}${pvShading}${pvConsump}${pvDisco}${pvTariff}\n\nDeliverable: PVsyst report, yield, payback, IRR, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in the same meeting.`,
+        `Feasibility deposit received. Deliver within 14 days.${contactLine}${deposit}${deadline}${assignee}\n\nPVsyst inputs:${pvSize}${pvRoof}${pvShading}${pvConsump}${pvDisco}${pvTariff}\n\nDeliverable: PVsyst report, yield, payback, IRR, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in the same meeting.`,
         'TECHNICAL', 'critical', 'in-progress', 14, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_delivered' }
       ));
@@ -210,7 +222,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-proposal-${lead.id}`,
         `Send EPC proposal — ${name}`,
-        `Feasibility delivered. Send EPC proposal within 48h.${finalSize}${pbLine}${npvLine}${equip}${clientFb}${nmLine}${fxLine}\nMust include: FX escalation clause · 30% deposit requirement · IEC-certified BOM · Performance guarantee.`,
+        `Feasibility delivered. Send EPC proposal within 48h.${contactLine}${finalSize}${pbLine}${npvLine}${equip}${clientFb}${nmLine}${fxLine}\nMust include: FX escalation clause · 30% deposit requirement · IEC-certified BOM · Performance guarantee.`,
         'SALES', 'critical', 'this-week', 2, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'proposal_sent' }
       ));
@@ -226,7 +238,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-followup-prop-${lead.id}`,
         `Follow up on EPC proposal — ${name}`,
-        `Proposal sent. Follow up 2×/week.${ctVal}${validLine}${fxLine}${termsLine}${objLine}${fbLine}\nStrategy: in-person meeting with irradiance model. If no response in 10 days: invoke 48h FX validity notice.`,
+        `Proposal sent. Follow up 2×/week.${contactLine}${ctVal}${validLine}${fxLine}${termsLine}${objLine}${fbLine}\nStrategy: in-person meeting with irradiance model. If no response in 10 days: invoke 48h FX validity notice.`,
         'SALES', 'high', 'this-week', 5, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'negotiation' }
       ));
@@ -242,10 +254,27 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `crm-close-${lead.id}`,
         `Close contract — ${name}${value}`,
-        `Active negotiation. Book in-person meeting this week.${ctVal}${stickLine}${concLine}${marginLine}${revLine}${fxLine}\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nBring: signed contract template, deposit invoice, FX clause explainer.\nWalk away if deposit refused.`,
+        `Active negotiation. Book in-person meeting this week.${contactLine}${ctVal}${stickLine}${concLine}${marginLine}${revLine}${fxLine}\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nBring: signed contract template, deposit invoice, FX clause explainer.\nWalk away if deposit refused.`,
         'SALES', 'critical', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'won' }
       ));
+    }
+
+    // ── Proposal expiry alert ─────────────────────────────────────────────────
+    if ((lead.stage === 'proposal_sent' || lead.stage === 'negotiation') && sPs.validUntil) {
+      const today      = new Date().toISOString().split('T')[0];
+      const daysLeft   = Math.round((new Date(sPs.validUntil) - new Date(today)) / 86400000);
+      if (daysLeft <= 5) {
+        const expired    = daysLeft < 0;
+        const ctVal      = sPs.contractValueEGP ? ` · EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : value;
+        add(task(
+          `prop-expiry-${lead.id}`,
+          `Proposal ${expired ? 'EXPIRED' : `expiring in ${daysLeft}d`} — ${name}${ctVal}`,
+          `Proposal validity ${expired ? `expired ${Math.abs(daysLeft)} day${Math.abs(daysLeft)!==1?'s':''} ago` : `expires ${sPs.validUntil} (${daysLeft} day${daysLeft!==1?'s':''})`}.\nLead: ${name}${contactLine}\nProposal ref: ${sPs.proposalRef || '—'}\n${expired ? '⚠ EXPIRED: Send revised proposal immediately or client may disengage.\nOptions: extend validity (add 30 days), or use expiry as close lever: "Our pricing changes tomorrow — ready to sign?"' : 'Action: Call client today. Use expiry as urgency lever.\nScript: "Our current pricing is valid until ' + sPs.validUntil + '. Equipment costs are rising — shall we lock this in?"'}`,
+          'SALES', expired ? 'critical' : 'high', 'this-week', 0, 'crm', lead.id,
+          { crmLeadId: lead.id }
+        ));
+      }
     }
 
     if (lead.stage === 'won') {
@@ -256,7 +285,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `exec-deposit-${lead.id}`,
         `Collect 30% deposit — ${name}`,
-        `Contract signed${contractRef}. Confirm deposit cleared before ANY equipment order.${ctVal}${kickoff}\nIssue deposit invoice immediately. No procurement without cleared funds.`,
+        `Contract signed${contractRef}. Confirm deposit cleared before ANY equipment order.${contactLine}${ctVal}${kickoff}\nIssue deposit invoice immediately. No procurement without cleared funds.`,
         'EXECUTION', 'critical', 'in-progress', 2, 'crm', lead.id,
         { fosStateUpdate: { depositCollected: true } }
       ));
@@ -303,7 +332,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       add(task(
         `exec-eng-brief-${lead.id}`,
         `Brief engineer & confirm mobilization — ${name}`,
-        `Contract won. Brief engineer and lock mobilization date.${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.`,
+        `Contract won. Brief engineer and lock mobilization date.${contactLine}${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.`,
         'TECHNICAL', 'critical', 'in-progress', 1, 'crm', lead.id,
         {}
       ));
@@ -320,7 +349,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         add(task(
           id,
           `Follow up — ${name} [OVERDUE]`,
-          `Follow-up is overdue.${dmLine}\nNext action: ${lead.nextAction || 'contact lead'}.\nStage: ${lead.stage.replace(/_/g,' ')}.${budgetLine}${needsLine}`,
+          `Follow-up is overdue.${contactLine}${dmLine}\nNext action: ${lead.nextAction || 'contact lead'}.\nStage: ${lead.stage.replace(/_/g,' ')}.${budgetLine}${needsLine}`,
           'SALES', 'high', 'this-week', 0, 'crm', lead.id,
           {}
         ));
@@ -574,6 +603,110 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     }
   }
 
+  // ── 5. Project governance alerts ──────────────────────────────────────────
+  try {
+    const allProjs = JSON.parse(localStorage.getItem('projects_v1')||'[]');
+    const EG_PSH   = [4.1,4.8,5.7,6.6,7.0,7.3,7.1,6.9,6.5,5.6,4.5,3.9];
+
+    for (const proj of allProjs) {
+      if (['on_hold'].includes(proj.status)) continue;
+      const client = proj.clientName || proj.name;
+
+      // DISCO approval delay
+      if (proj.discoSubmittedDate && !proj.discoApprovedDate) {
+        const days = Math.floor((Date.now() - new Date(proj.discoSubmittedDate)) / 86400000);
+        if (days >= 21) {
+          add(task(
+            `disco-delay-${proj.id}`,
+            `Chase DISCO approval — ${client} [${days}d pending]`,
+            `DISCO application submitted ${proj.discoSubmittedDate} — no approval received after ${days} days.\nProject: ${proj.name}\nBenchmark: 30–60 day approval in Egypt is common, but chase at day 21.\nAction: Call DISCO office, ask for reference number status, log response in Projects → DISCO tracker.\nEvery week of delay costs ~EGP 1,000–2,000 in subcontractor standby and holds the final 10% milestone.`,
+            'EXECUTION', days >= 35 ? 'critical' : 'high', 'this-week', 0, 'crm', proj.id, {}
+          ));
+        }
+      }
+
+      // Unsigned change orders
+      const unsigned = (proj.changeOrders||[]).filter(co => !co.clientSigned);
+      if (unsigned.length > 0 && !['complete'].includes(proj.status)) {
+        const totalVal = unsigned.reduce((s,co)=>s+(Number(co.amountEGP)||0),0);
+        add(task(
+          `co-unsigned-${proj.id}`,
+          `Get client sign-off: ${unsigned.length} change order${unsigned.length>1?'s':''} — ${client}`,
+          `${unsigned.length} unsigned change order${unsigned.length>1?'s':''} on project: ${proj.name}\nUnsigned COs: ${unsigned.map(co=>`CO-${String(co.num).padStart(3,'0')}: ${co.description} (${co.amountEGP ? `EGP ${Number(co.amountEGP).toLocaleString()}` : 'no amount'})`).join('\n')}\nTotal unsigned value: EGP ${totalVal.toLocaleString()}\nAction: Send formal change order document for client signature. Do not proceed with scope change until signed.\nRule: Industry standard — any change >2% of contract value requires written sign-off.`,
+          'EXECUTION', 'high', 'this-week', 0, 'crm', proj.id, {}
+        ));
+      }
+
+      // Low contingency (<5%)
+      const cv = Number(proj.contractValue)||0;
+      if (cv > 0 && !['complete'].includes(proj.status)) {
+        const contBudget  = cv * (Number(proj.contingencyBudgetPct)||20) / 100;
+        const reworkTotal = (proj.costs||[]).filter(c=>c.category==='rework').reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const remPct      = contBudget > 0 ? Math.round((contBudget - reworkTotal) / contBudget * 100) : 100;
+        if (remPct < 5) {
+          add(task(
+            `low-contingency-${proj.id}`,
+            `Contingency exhausted (${remPct}% left) — ${client}`,
+            `Contingency reserve is ${remPct}% remaining on: ${proj.name}\nContingency budget: EGP ${Math.round(contBudget).toLocaleString()} (${Number(proj.contingencyBudgetPct)||20}% of contract)\nRework costs to date: EGP ${reworkTotal.toLocaleString()}\nRemaining: EGP ${Math.max(0,Math.round(contBudget-reworkTotal)).toLocaleString()}\nAction: Review project scope for further risk. Consider raising a change order for any additional scope. Notify client of budget pressure before next milestone invoice.\nBenchmark: Egypt EPC recommended contingency 20–22% of contract value.`,
+            'EXECUTION', 'critical', 'this-week', 0, 'crm', proj.id, {}
+          ));
+        }
+      }
+
+      // No client contact >14 days (active projects)
+      if (['in_progress','commissioning'].includes(proj.status)) {
+        const commsLog = proj.commsLog || [];
+        const lastDate = commsLog.length > 0 ? commsLog.reduce((m,e)=>e.date>m?e.date:m,'') : null;
+        const daysSince = lastDate ? Math.floor((Date.now() - new Date(lastDate)) / 86400000) : null;
+        if (daysSince === null || daysSince > 14) {
+          add(task(
+            `no-contact-${proj.id}`,
+            daysSince === null ? `No client contact logged — ${client}` : `${daysSince}d without client contact — ${client}`,
+            `Project: ${proj.name}${lastDate ? `\nLast contact: ${lastDate} (${daysSince} days ago)` : '\nNo communication logged.'}\nBenchmark: Weekly minimum contact during active construction (Planisware stakeholder management).\nAction: Call or WhatsApp client for a status update. Log the contact in Projects → Comms tab.\nRisk: Egyptian clients expect regular personal contact — silence creates doubt and payment delays.`,
+            'EXECUTION', daysSince === null || daysSince > 21 ? 'high' : 'medium', 'this-week', 0, 'crm', proj.id, {}
+          ));
+        }
+      }
+
+      // Low PR alert — last 2 months PR <70%
+      if (['commissioning','complete'].includes(proj.status)) {
+        const kWp = parseFloat(proj.systemSizeKW)||0;
+        const yieldLog = proj.yieldLog || [];
+        if (kWp > 0 && yieldLog.length >= 2) {
+          const recentEntries = [...yieldLog].sort((a,b)=>b.month.localeCompare(a.month)).slice(0,2);
+          const prValues = recentEntries.map(e => {
+            const actual = parseFloat(e.actualKwh)||0;
+            if (!actual) return null;
+            const mo = parseInt(e.month.slice(5,7));
+            const yr = parseInt(e.month.slice(0,4));
+            const days = new Date(yr, mo, 0).getDate();
+            const psh  = EG_PSH[mo-1];
+            return actual / (kWp * psh * days) * 100;
+          }).filter(v => v !== null);
+          const avgPR = prValues.length > 0 ? prValues.reduce((s,v)=>s+v,0)/prValues.length : null;
+          if (avgPR !== null && avgPR < 70) {
+            add(task(
+              `low-pr-${proj.id}`,
+              `Low performance ratio (${Math.round(avgPR)}%) — investigate — ${client}`,
+              `System PR in last ${prValues.length} months: ${Math.round(avgPR)}% — below minimum threshold.\nProject: ${proj.name} (${kWp} kWp)\nBenchmark: Egypt/MENA target 78–85% (IEA PVPS T13-28 2024). Below 70% requires fault investigation per IEC 61724.\nCommon causes in Egypt: excessive soiling (dust), inverter fault or clipping, shading from new obstruction, sensor/monitoring error.\nAction: Site visit to check panels (soiling, physical damage), inverter error logs, string voltage measurements. Log findings in Site Log tab.`,
+              'TECHNICAL', avgPR < 65 ? 'critical' : 'high', 'this-week', 0, 'crm', proj.id, {}
+            ));
+          }
+        }
+      }
+
+      // NPS not captured for completed projects
+      if (proj.status === 'complete' && proj.npsScore === null) {
+        add(task(
+          `nps-${proj.id}`,
+          `Ask client: how likely are you to refer us? — ${client}`,
+          `Project completed but no recommendation score recorded: ${proj.name}\nAction: Ask client: "On a scale of 0–10, how likely are you to refer us to a colleague or business partner?"\nRecord in Projects → Comms tab → Recommendation Score prompt at the top.\nWhy it matters: referral likelihood is the leading indicator of your pipeline. Your referral source attribution shows referrals are your primary lead source — every completed project is a referral opportunity.\nBenchmark: B2B solar/energy services score 30–50 (industry average). Score ≥9 → ask directly for a referral introduction.`,
+          'SALES', 'medium', 'backlog', 7, 'crm', proj.id, {}
+        ));
+      }
+    }
+  } catch {}
+
   // Sort: in-progress critical first, then this-week critical, then by priority
   const order = { critical: 0, high: 1, medium: 2, low: 3 };
   const listOrder = { 'in-progress': 0, 'this-week': 1, 'backlog': 2 };
@@ -614,7 +747,8 @@ export const trelloGetBoardLabels = (config) =>
 export const trelloGetBoardCards = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/cards?filter=all&fields=id,name,desc,idList,labels,dueComplete,closed`, null, config);
 
-const trelloArchiveCard    = (config, cardId)            => trelloReq('PUT',  `/cards/${cardId}`,              { closed: true }, config);
+const trelloArchiveCard      = (config, cardId)            => trelloReq('PUT',  `/cards/${cardId}`,              { closed: true }, config);
+export const trelloUpdateCardName = (config, cardId, name) => trelloReq('PUT',  `/cards/${cardId}`,              { name }, config);
 const trelloAddCardLabel   = (config, cardId, labelId)   => trelloReq('POST', `/cards/${cardId}/idLabels`,     { value: labelId }, config);
 const trelloRemoveCardLabel= (config, cardId, labelId)   => trelloReq('DELETE',`/cards/${cardId}/idLabels/${labelId}`, null, config);
 const trelloRenameList   = (config, listId, name)   => trelloReq('PUT',  `/lists/${listId}`,          { name }, config);

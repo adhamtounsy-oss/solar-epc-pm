@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
+import { SalesAssistModal } from './SalesAssistView';
 import { scaffoldDocuments } from '../engine/docScaffold';
 import {
   PIPELINE_STAGES, SEGMENTS, SOURCE_TYPES, PAIN_POINTS, TEMPERATURES,
@@ -99,6 +100,7 @@ const MetricCard = ({ label, value, sub, color=N, urgent }) => (
 
 // ── PM Integration alert types ─────────────────────────────────────────────────
 const PM_TRIGGERS = {
+  site_visit_scheduled:  { icon:'📅', title:'Site Visit Scheduled — Prepare Now', color:T, bg:'#e8f8f9', action:'Charge phone. Download meter app (e.g. PhyPhox). Print site checklist. Confirm address + arrival time with on-site contact. Bring: tape measure, ≥10 photos checklist, load data request sheet, DB panel label camera.' },
   feasibility_sold:      { icon:'📋', title:'Feasibility Study Sold — Create PM Task', color:T, bg:'#e8f8f9', action:'Go to Tasks tab → create "Prepare Feasibility Study for [Lead]" under WBS-3.' },
   proposal_sent:         { icon:'💰', title:'EPC Proposal Sent — Check Cash Exposure', color:AM, bg:'#fff3cd', action:'Confirm deposit collected. Verify FX escalation clause in proposal. Reserve cash for procurement exposure.' },
   won:                   { icon:'🏆', title:'Contract Won — Execution Workflow Launched', color:GR, bg:'#e8f5e9', action:'Project automatically created in the Projects tab with 30/30/30/10 milestones. Also open Tasks tab → add execution tasks: contract checklist, engineer briefing, procurement readiness, DISCO submission.' },
@@ -269,7 +271,22 @@ const STAGE_DOSSIER_CONFIG = [
     stageId:'lost', label:'Deal Lost', icon:'❌',
     fields:[
       { k:'lossDate',           label:'Loss Date',               type:'date' },
-      { k:'lossReason',         label:'Loss Reason',             type:'select', opts:['Price','Budget Cut','Timing','Competitor Chosen','Scope Too Large','Regulatory','Relationship','Other'] },
+      { k:'lossCategory',       label:'Loss Category',           type:'select', opts:['Technical','Commercial','Relationship','Other'] },
+      { k:'lossReason',         label:'Loss Reason',             type:'select', opts:[
+        'Technical — Shading Not Viable',
+        'Technical — Insufficient Roof / Area',
+        'Technical — Structural Constraint',
+        'Technical — No DISCO / Grid Access',
+        'Technical — Lease / Permission Refused',
+        'Commercial — Price',
+        'Commercial — Competitor Chosen',
+        'Commercial — Budget Cut',
+        'Commercial — Timing',
+        'Commercial — Scope Too Large',
+        'Relationship',
+        'Other',
+      ]},
+      { k:'blockingFinding',    label:'Blocking Finding (for Technical losses — what specifically ruled it out)', type:'textarea', full:true },
       { k:'competitorName',     label:'Competitor Name',         type:'text' },
       { k:'competitorPriceEGP', label:'Competitor Price (EGP)',  type:'number' },
       { k:'ourFinalPriceEGP',   label:'Our Final Price (EGP)',   type:'number' },
@@ -277,13 +294,18 @@ const STAGE_DOSSIER_CONFIG = [
       { k:'futureOpportunity',  label:'Future Opportunity?',     type:'checkbox' },
       { k:'nurtureDate',        label:'Reactivate On',           type:'date' },
     ],
-    summaryFn: d => [d.lossDate, d.lossReason, d.competitorName && `vs. ${d.competitorName}`].filter(Boolean).join(' · '),
+    summaryFn: d => [d.lossDate, d.lossCategory, d.lossReason, d.competitorName && `vs. ${d.competitorName}`].filter(Boolean).join(' · '),
   },
 ];
 
 // ── Auto-Sizing Calculator ─────────────────────────────────────────────────────
+// Egypt monthly irradiance profile (peak sun hours, Cairo average)
+const EG_MONTHLY_PSH = [4.1,4.8,5.7,6.6,7.0,7.3,7.1,6.9,6.5,5.6,4.5,3.9];
+const EG_MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 const AutoSizingCalc = ({ data, lead, onChange, setLead }) => {
   const avg = parseFloat(data.avgMonthlyKwh) || 0;
+  const [showMonthly, setShowMonthly] = useState(false);
   if (avg === 0) return (
     <div style={{ gridColumn:'1/-1', background:'#f8f9fa', border:'1px dashed #dde1e7', borderRadius:6, padding:'10px 14px', fontSize:11, color:'#aaa', marginBottom:4 }}>
       Enter <b>Avg Monthly Consumption (kWh)</b> below to auto-calculate system sizing.
@@ -292,16 +314,18 @@ const AutoSizingCalc = ({ data, lead, onChange, setLead }) => {
   const tariff  = lead.monthlyBill && avg ? parseFloat(lead.monthlyBill) / avg : 0.8;
   const kWp     = (avg / 30 / 5.5) / 0.75;
   const panels  = Math.ceil(kWp * 1000 / 400);
-  const yield_  = Math.round(kWp * 1500);
+  const monthlyYield = EG_MONTHLY_PSH.map(psh => Math.round(kWp * psh * 30 * 0.75));
+  const yield_  = monthlyYield.reduce((s, v) => s + v, 0);
   const savings = Math.round(yield_ * (tariff || 0.8));
   const pb      = savings > 0 ? (Math.round(kWp * 8000) / savings).toFixed(1) : '—';
+  const maxMy   = Math.max(...monthlyYield);
   const apply = () => {
     onChange({ recommendedSizeKwp:parseFloat(kWp.toFixed(1)), estimatedPanelCount:panels, estimatedAnnualYieldKwh:yield_, estimatedAnnualSavingsEGP:savings, roughPaybackYears:parseFloat(pb)||0 });
     if (!lead.systemSizeKW) setLead(p => ({ ...p, systemSizeKW:kWp.toFixed(1) }));
   };
   return (
     <div style={{ gridColumn:'1/-1', background:'#f0f7f4', border:`1px solid ${T}`, borderRadius:6, padding:12, marginBottom:4 }}>
-      <div style={{ fontSize:10, fontWeight:900, color:T, textTransform:'uppercase', letterSpacing:'1px', marginBottom:10 }}>Auto-Sizing Calculator (Egypt averages)</div>
+      <div style={{ fontSize:10, fontWeight:900, color:T, textTransform:'uppercase', letterSpacing:'1px', marginBottom:10 }}>Auto-Sizing Calculator (Egypt irradiance profile)</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))', gap:6, marginBottom:10 }}>
         {[
           { label:'Daily Load',     value:`${(avg/30).toFixed(0)} kWh` },
@@ -317,10 +341,30 @@ const AutoSizingCalc = ({ data, lead, onChange, setLead }) => {
           </div>
         ))}
       </div>
-      <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap', marginBottom: showMonthly ? 10 : 0 }}>
         <button onClick={apply} style={{ ...BTN, background:T, color:'#fff', fontSize:11 }}>↙ Apply to Output Fields</button>
-        <span style={{ fontSize:9, color:'#aaa' }}>5.5h peak sun · PR 0.75 · EGP 8,000/kWp est. CAPEX</span>
+        <button onClick={()=>setShowMonthly(v=>!v)} style={{ ...BTN, background:'transparent', color:T, border:`1px solid ${T}`, fontSize:11 }}>
+          {showMonthly ? 'Hide' : 'Monthly Yield ▾'}
+        </button>
+        <span style={{ fontSize:9, color:'#aaa' }}>Egypt irradiance profile · PR 0.75 · EGP 8,000/kWp CAPEX</span>
       </div>
+      {showMonthly && (
+        <div style={{ background:'#fff', borderRadius:4, padding:'10px 8px', border:`1px solid ${T}33` }}>
+          <div style={{ fontSize:9, fontWeight:700, color:T, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:8 }}>Monthly Yield (kWh)</div>
+          <div style={{ display:'flex', gap:4, alignItems:'flex-end', height:60 }}>
+            {monthlyYield.map((v, i) => {
+              const pct = maxMy > 0 ? v / maxMy : 0;
+              return (
+                <div key={i} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+                  <div style={{ fontSize:8, color:'#888', fontWeight:700 }}>{Math.round(v/1000*10)/10}k</div>
+                  <div style={{ width:'100%', height:`${Math.max(4, pct*44)}px`, background:T, borderRadius:'2px 2px 0 0', opacity:0.55+pct*0.45 }} />
+                  <div style={{ fontSize:8, color:'#aaa' }}>{EG_MONTH_NAMES[i]}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -585,6 +629,100 @@ export const DossierModal = ({ lead, onClose, onEdit }) => {
   );
 };
 
+// ── WhatsApp Template Engine ───────────────────────────────────────────────────
+const WA_TEMPLATES = [
+  {
+    id: 'first_contact',
+    label: 'First Contact',
+    stages: ['unqualified','contacted'],
+    body: (l) => `السلام عليكم ${l.contactPerson||l.orgName}،\n\nأنا ${''} من شركة [اسم الشركة]، متخصصون في تصميم وتركيب أنظمة الطاقة الشمسية.\n\nسمعنا عن ${l.orgName} وأعتقد أننا نقدر نساعدكم في تخفيض فاتورة الكهرباء بشكل ملحوظ.\n\nممكن نتكلم دقيقتين لأشرح لك الفكرة؟`,
+  },
+  {
+    id: 'post_site_visit',
+    label: 'After Site Visit',
+    stages: ['site_visit_completed','feasibility_proposed'],
+    body: (l) => `السلام عليكم ${l.contactPerson||l.orgName}،\n\nشكراً لاستقبالكم. الزيارة كانت مفيدة جداً.\n\nبناءً على ما شفناه، نظام بـ ${l.stageData?.site_visit_completed?.recommendedSizeKwp||l.systemSizeKW||'?'} كيلوواط مناسب تماماً للموقع.\n\nسنرسل لكم دراسة الجدوى ${l.stageData?.feasibility_proposed?.feeQuotedEGP?`مقابل EGP ${Number(l.stageData.feasibility_proposed.feeQuotedEGP).toLocaleString()}`:'قريباً'} تتضمن: العائد السنوي، مدة الاسترداد، والمواصفات الكاملة.\n\nمتى مناسب نتابع؟`,
+  },
+  {
+    id: 'proposal_followup',
+    label: 'Proposal Follow-Up',
+    stages: ['proposal_sent','negotiation'],
+    body: (l) => {
+      const cv   = l.stageData?.proposal_sent?.contractValueEGP || l.dealValue;
+      const vu   = l.stageData?.proposal_sent?.validUntil;
+      return `السلام عليكم ${l.contactPerson||l.orgName}،\n\nأتابع معكم بخصوص عرض السعر${cv?` (EGP ${Number(cv).toLocaleString()})`:''} الذي أرسلناه.\n\nلو في أي استفسارات أو تعديلات مطلوبة، أنا جاهز للتوضيح في أي وقت.${vu?`\n\nالعرض ساري حتى ${vu} — أنصح بالتأكيد قبل انتهاء السعر الحالي.`:''}\n\nمتى نقدر نحجز اجتماع؟`;
+    },
+  },
+  {
+    id: 'expiry_lever',
+    label: 'Expiry Urgency',
+    stages: ['proposal_sent','negotiation'],
+    body: (l) => {
+      const vu = l.stageData?.proposal_sent?.validUntil || '[تاريخ الانتهاء]';
+      return `السلام عليكم ${l.contactPerson||l.orgName}،\n\nأريد أذكركم أن عرض الأسعار المقدم ساري حتى ${vu} فقط.\n\nأسعار الألواح الشمسية في تصاعد مستمر بسبب تذبذب سعر الدولار. لو أكدنا الطلب الآن، نلتزم بالسعر الحالي بالكامل.\n\nأرجو الرد اليوم أو غداً حتى نستطيع التحرك. هل الموافقة من جانبكم جاهزة؟`;
+    },
+  },
+  {
+    id: 'payment_reminder',
+    label: 'Payment Reminder',
+    stages: ['won'],
+    body: (l) => `السلام عليكم ${l.contactPerson||l.orgName}،\n\nأتمنى تكونوا بخير.\n\nبخصوص الدفعة المستحقة لمشروع ${l.orgName}، أرجو التأكد من تحويلها حتى نتمكن من الاستمرار في المشروع حسب الجدول الزمني المتفق عليه.\n\nأي استفسار أنا متاح.`,
+  },
+  {
+    id: 'referral_ask',
+    label: 'Referral Request',
+    stages: ['won'],
+    body: (l) => `السلام عليكم ${l.contactPerson||l.orgName}،\n\nنسعد بتعاملنا معكم في مشروع الطاقة الشمسية.\n\nلو في أي معارف أو شركات تفكر في تطبيق نظام مماثل، يسعدنا لو تعرفونا عليهم. نوفر لكم [حافز المحيل] كشكر على الإحالة.\n\nشكراً لثقتكم.`,
+  },
+];
+
+const WATemplates = ({ lead }) => {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(null);
+
+  const relevant = WA_TEMPLATES.filter(t => t.stages.includes(lead.stage) || t.stages.length === 0);
+
+  const copy = (id, text) => {
+    navigator.clipboard?.writeText(text).catch(() => {});
+    setCopied(id);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div style={{ marginBottom:4 }}>
+      <button onClick={() => setOpen(v=>!v)}
+        style={{ ...BTN, background:'transparent', color:T, border:`1px solid ${T}`, fontSize:11, padding:'5px 12px', marginBottom: open?10:0 }}>
+        💬 WhatsApp Templates {relevant.length > 0 ? `(${relevant.length} for this stage)` : ''} {open?'▲':'▾'}
+      </button>
+      {open && (
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {WA_TEMPLATES.map(t => {
+            const isRelevant = t.stages.includes(lead.stage);
+            const body = t.body(lead);
+            return (
+              <div key={t.id} style={{ background: isRelevant ? '#f0f7f4' : '#f8f9fa', border:`1px solid ${isRelevant?T:'#e0e0e0'}`, borderRadius:6, padding:12, opacity: isRelevant ? 1 : 0.6 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                  <div>
+                    <span style={{ fontSize:11, fontWeight:800, color: isRelevant?T:N }}>{t.label}</span>
+                    {isRelevant && <span style={{ fontSize:9, fontWeight:700, color:T, background:'#e8f8f9', borderRadius:3, padding:'1px 6px', marginLeft:6 }}>CURRENT STAGE</span>}
+                  </div>
+                  <button onClick={() => copy(t.id, body)}
+                    style={{ ...BTN, background: copied===t.id ? T : '#fff', color: copied===t.id?'#fff':T, border:`1px solid ${T}`, fontSize:10, padding:'3px 10px' }}>
+                    {copied===t.id ? '✓ Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <div style={{ fontSize:11, color:'#555', lineHeight:1.7, whiteSpace:'pre-wrap', fontFamily:'inherit', background:'#fff', borderRadius:4, padding:'8px 10px', border:'1px solid #eee' }}>
+                  {body}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Lead Form Modal ────────────────────────────────────────────────────────────
 const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
   const [f, setF] = useState(lead ? { stageData:{}, ...lead } : { ...EMPTY_LEAD, id: nextId(leads, 'L') });
@@ -691,6 +829,15 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
           <Field label="Probability %" k="probability" type="number" min="0" />
           <Field label="Estimated Deal Value EGP" k="dealValue" type="number" min="0" />
           <Field label="Next Action" k="nextAction" full />
+          <div>
+            <div style={{ ...SL, marginBottom:4 }}>Referred by (client/lead)</div>
+            <select style={INP} value={f.referredByLeadId||''} onChange={e=>set('referredByLeadId',e.target.value||'')}>
+              <option value="">— Not a referral —</option>
+              {leads.filter(l => l.id !== f.id).sort((a,b) => (b.stage==='won'?1:0)-(a.stage==='won'?1:0)).map(l => (
+                <option key={l.id} value={l.id}>{l.orgName}{l.stage==='won'?' ✓':''}</option>
+              ))}
+            </select>
+          </div>
 
           <SectionHead title="Follow-Up" />
           <Field label="Last Contacted" k="lastContacted" type="date" />
@@ -698,8 +845,11 @@ const LeadModal = ({ lead, leads, onSave, onDelete, onClose }) => {
           <Field label="Number of Touches" k="touches" type="number" min="0" />
 
           <div style={{ gridColumn:'1/-1' }}>
-            <div style={{ ...SL, marginBottom:6 }}>WhatsApp Follow-Up Script</div>
-            <textarea rows={3} placeholder="Draft WhatsApp message for follow-up..." style={{ ...INP, resize:'vertical', fontSize:12 }} value={f.waScript||''} onChange={e=>set('waScript',e.target.value)} />
+            <WATemplates lead={f} />
+          </div>
+          <div style={{ gridColumn:'1/-1' }}>
+            <div style={{ ...SL, marginBottom:6 }}>WhatsApp Custom Script</div>
+            <textarea rows={3} placeholder="Draft a custom WhatsApp message for follow-up..." style={{ ...INP, resize:'vertical', fontSize:12 }} value={f.waScript||''} onChange={e=>set('waScript',e.target.value)} />
           </div>
 
           <SectionHead title="Tags" />
@@ -1008,6 +1158,43 @@ const CRMDashboard = ({ leads, tenders, pmAlerts, onClearAlert }) => {
         </div>
       )}
 
+      {/* Proposal Expiry Alerts */}
+      {(() => {
+        const expiring = leads.filter(l => {
+          if (!['proposal_sent','negotiation'].includes(l.stage)) return false;
+          const vu = l.stageData?.proposal_sent?.validUntil;
+          if (!vu) return false;
+          return daysUntil(vu) <= 5;
+        });
+        if (expiring.length === 0) return null;
+        return (
+          <div style={{ ...CARD, padding:16, marginBottom:16, borderTop:`3px solid ${AM}` }}>
+            <div style={{ fontSize:11, fontWeight:900, color:AM, textTransform:'uppercase', letterSpacing:'1px', marginBottom:12 }}>
+              ⚠ {expiring.length} Proposal{expiring.length!==1?'s':''} Expiring / Expired
+            </div>
+            {expiring.map((l, i) => {
+              const vu   = l.stageData.proposal_sent.validUntil;
+              const days = daysUntil(vu);
+              const exp  = days < 0;
+              return (
+                <div key={l.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom: i<expiring.length-1?'1px solid #f0f2f5':'none' }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:N }}>{l.orgName}</div>
+                    <div style={{ fontSize:11, color:'#888', marginTop:2 }}>
+                      Valid until: {vu}
+                      {l.stageData.proposal_sent.contractValueEGP && ` · EGP ${Number(l.stageData.proposal_sent.contractValueEGP).toLocaleString()}`}
+                    </div>
+                  </div>
+                  <span style={{ fontSize:10, fontWeight:800, color: exp?R:AM, background: exp?'#fff5f5':'#fff3cd', borderRadius:3, padding:'2px 8px', flexShrink:0 }}>
+                    {exp ? `${Math.abs(days)}d EXPIRED` : days === 0 ? 'Expires TODAY' : `${days}d left`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Pipeline Funnel */}
       <div style={{ ...CARD, padding:16 }}>
         <div style={{ ...SL, marginBottom:12 }}>Pipeline Funnel</div>
@@ -1047,7 +1234,7 @@ const CRMDashboard = ({ leads, tenders, pmAlerts, onClearAlert }) => {
 };
 
 // ── LEAD TABLE SECTION ─────────────────────────────────────────────────────────
-const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport, onDossier }) => {
+const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport, onDossier, onSalesAssist }) => {
   const [search, setSearch] = useState('');
   const [seg, setSeg]       = useState('All');
   const [stg, setStg]       = useState('All');
@@ -1148,6 +1335,7 @@ const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport, onDossier }) => {
                   </td>
                   <td style={{ padding:'10px 10px' }}>
                     <div style={{ display:'flex', gap:4 }}>
+                      <button onClick={()=>onSalesAssist(l)} style={{ ...BTN, background:G, color:'#fff', padding:'5px 8px', fontSize:11 }} title="Sales Assist">⚡</button>
                       <button onClick={()=>onDossier(l)} style={{ ...BTN, background:'#e8f8f9', color:T, padding:'5px 8px', fontSize:11 }} title="View Dossier">📋</button>
                       <button onClick={()=>onEdit(l)} style={{ ...BTN, background:T, color:'#fff', padding:'5px 10px', fontSize:11 }}>Edit</button>
                     </div>
@@ -1163,7 +1351,7 @@ const LeadTable = ({ leads, onEdit, onAdd, onExport, onImport, onDossier }) => {
 };
 
 // ── PIPELINE KANBAN SECTION ────────────────────────────────────────────────────
-const CRMKanban = ({ leads, onEdit, onStageChange, onDossier }) => {
+const CRMKanban = ({ leads, onEdit, onStageChange, onDossier, onSalesAssist }) => {
   const [filter, setFilter] = useState('All');
   const filteredLeads = filter === 'All' ? leads : leads.filter(l => l.segment === filter);
 
@@ -1214,12 +1402,33 @@ const CRMKanban = ({ leads, onEdit, onStageChange, onDossier }) => {
                           <div style={{ fontSize:12, fontWeight:800, color:N, lineHeight:1.2, flex:1 }}>{l.orgName}</div>
                           <ScoreChip score={score} />
                         </div>
-                        <div style={{ fontSize:10, color:'#888', marginBottom:5 }}>{l.segment} · {l.governorate}</div>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:5 }}>
+                          <span style={{ fontSize:10, color:'#888' }}>{l.segment} · {l.governorate}</span>
+                          {l.stageEnteredDate && (() => {
+                            const d = Math.round((new Date(todayStr()) - new Date(l.stageEnteredDate)) / 86400000);
+                            const c = d > 21 ? R : d > 10 ? AM : '#aaa';
+                            return <span style={{ fontSize:9, fontWeight:800, color:c, background:d>10?`${c}22`:'transparent', borderRadius:3, padding:'1px 5px' }}>{d}d</span>;
+                          })()}
+                        </div>
                         {l.dealValue && <div style={{ fontSize:11, fontWeight:700, color:T, marginBottom:5 }}>{fmtEGP(l.dealValue)}</div>}
                         {l.nextAction && <div style={{ fontSize:10, color:'#555', marginBottom:5, lineHeight:1.4, borderLeft:'2px solid #eee', paddingLeft:6 }}>{l.nextAction.slice(0,80)}{l.nextAction.length>80?'…':''}</div>}
                         {over && <div style={{ fontSize:9, fontWeight:800, color:R, marginBottom:4 }}>⚠ {Math.abs(days||0)}d overdue</div>}
                         {!over && l.nextFollowUp && <div style={{ fontSize:9, color:'#aaa', marginBottom:4 }}>Follow-up: {days===0?'Today':`${days}d`}</div>}
+                        {(() => {
+                          const vu = l.stageData?.proposal_sent?.validUntil;
+                          if (!vu || !['proposal_sent','negotiation'].includes(l.stage)) return null;
+                          const vd = daysUntil(vu);
+                          if (vd > 5) return null;
+                          const exp = vd < 0;
+                          return <div style={{ fontSize:9, fontWeight:800, color: exp?R:AM, marginBottom:4 }}>{exp?`📋 Proposal expired ${Math.abs(vd)}d ago`:`📋 Proposal expires in ${vd}d`}</div>;
+                        })()}
+                        {l.referredByLeadId && (() => {
+                          const refLead = leads.find(x => x.id === l.referredByLeadId);
+                          if (!refLead) return null;
+                          return <div style={{ fontSize:9, color:'#1a7a3f', marginBottom:3 }}>via {refLead.orgName}</div>;
+                        })()}
                         <div style={{ display:'flex', gap:4, marginTop:6 }}>
+                          <button onClick={()=>onSalesAssist(l)} style={{ ...BTN, padding:'3px 6px', fontSize:9, background:G, color:'#fff' }} title="Sales Assist">⚡</button>
                           <button onClick={()=>onDossier(l)} style={{ ...BTN, padding:'3px 6px', fontSize:9, background:'#e8f8f9', color:T }} title="Dossier">📋</button>
                           <button onClick={()=>onEdit(l)} style={{ ...BTN, padding:'3px 8px', fontSize:9, background:'#f0f2f5', color:N, flex:1 }}>Edit</button>
                           {!isTerminal && nextStage && <button onClick={()=>onStageChange(l.id, nextStage.id, l.orgName)} style={{ ...BTN, padding:'3px 8px', fontSize:9, background:T, color:'#fff' }}>→</button>}
@@ -1424,15 +1633,20 @@ const VelocityTab = ({ leads }) => {
   // Loss analysis data
   const lossWithData = lost.filter(l => l.stageData?.lost);
   const lossReasons = {}; const lossComps = {}; const lossLessons = [];
+  const lossCategories = { Technical: 0, Commercial: 0, Relationship: 0, Other: 0 };
+  const blockingFindings = [];
   lossWithData.forEach(l => {
     const d = l.stageData.lost;
-    if (d.lossReason)     lossReasons[d.lossReason]    = (lossReasons[d.lossReason]||0) + 1;
-    if (d.competitorName) lossComps[d.competitorName]  = (lossComps[d.competitorName]||0) + 1;
-    if (d.lessonsLearned) lossLessons.push({ org: l.orgName, lesson: d.lessonsLearned });
+    if (d.lossReason)      lossReasons[d.lossReason]    = (lossReasons[d.lossReason]||0) + 1;
+    if (d.competitorName)  lossComps[d.competitorName]  = (lossComps[d.competitorName]||0) + 1;
+    if (d.lessonsLearned)  lossLessons.push({ org: l.orgName, lesson: d.lessonsLearned });
+    if (d.lossCategory && lossCategories[d.lossCategory] !== undefined) lossCategories[d.lossCategory]++;
+    if (d.blockingFinding) blockingFindings.push({ org: l.orgName, finding: d.blockingFinding, reason: d.lossReason });
   });
   const maxReasonCnt      = Math.max(...Object.values(lossReasons), 1);
   const sortedLossReasons = Object.entries(lossReasons).sort((a,b) => b[1]-a[1]);
   const sortedLossComps   = Object.entries(lossComps).sort((a,b) => b[1]-a[1]);
+  const totalCategorised  = Object.values(lossCategories).reduce((s,v)=>s+v,0);
 
   return (
     <div>
@@ -1534,6 +1748,83 @@ const VelocityTab = ({ leads }) => {
 
       </div>
 
+      {/* Referral Network */}
+      {(() => {
+        const referrers = {};
+        leads.forEach(l => {
+          if (!l.referredByLeadId) return;
+          const ref = leads.find(x => x.id === l.referredByLeadId);
+          if (!ref) return;
+          if (!referrers[ref.id]) referrers[ref.id] = { org: ref.orgName, leads: 0, egpWon: 0 };
+          referrers[ref.id].leads++;
+          if (l.stage === 'won') referrers[ref.id].egpWon += parseFloat(l.dealValue)||0;
+        });
+        const rows = Object.values(referrers).sort((a,b) => b.leads - a.leads);
+        if (rows.length === 0) return null;
+        return (
+          <div style={{ ...CARD, padding:16, marginTop:16 }}>
+            <div style={{ ...SL, marginBottom:12 }}>Referral Network</div>
+            <div style={{ display:'grid', gridTemplateColumns:'minmax(120px,2fr) repeat(2,1fr)', gap:0, marginBottom:6 }}>
+              {['Referring Client','Referrals','EGP Won via Referrals'].map(h => (
+                <div key={h} style={{ fontSize:9, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.4px', padding:'4px 8px' }}>{h}</div>
+              ))}
+            </div>
+            {rows.map(r => (
+              <div key={r.org} style={{ display:'grid', gridTemplateColumns:'minmax(120px,2fr) repeat(2,1fr)', gap:0, borderTop:'1px solid #f5f5f5', alignItems:'center' }}>
+                <div style={{ fontSize:12, fontWeight:700, color:N, padding:'7px 8px' }}>{r.org}</div>
+                <div style={{ fontSize:12, color:T, fontWeight:700, padding:'7px 8px' }}>{r.leads}</div>
+                <div style={{ fontSize:12, color: r.egpWon>0?GR:'#aaa', fontWeight:700, padding:'7px 8px' }}>{r.egpWon>0?fmtEGP(r.egpWon):'—'}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* Source Revenue Attribution */}
+      <div style={{ ...CARD, padding:16, marginTop:16 }}>
+        <div style={{ ...SL, marginBottom:12 }}>Lead Source — Revenue Attribution</div>
+        {(() => {
+          const sourceMap = {};
+          leads.forEach(l => {
+            const src = l.sourceType || 'Unknown';
+            if (!sourceMap[src]) sourceMap[src] = { leads:0, wonLeads:0, egpWon:0, weightedPipe:0 };
+            sourceMap[src].leads++;
+            if (l.stage === 'won') { sourceMap[src].wonLeads++; sourceMap[src].egpWon += parseFloat(l.dealValue)||0; }
+            if (!['won','lost','nurture'].includes(l.stage)) {
+              sourceMap[src].weightedPipe += (parseFloat(l.dealValue)||0) * stageProb(l.stage) / 100;
+            }
+          });
+          const rows = Object.entries(sourceMap).sort((a,b) => b[1].egpWon - a[1].egpWon);
+          const maxEGP = Math.max(...rows.map(([,v])=>v.egpWon), 1);
+          if (rows.length === 0) return <div style={{ fontSize:11, color:'#bbb', textAlign:'center', padding:12 }}>No source data yet.</div>;
+          return (
+            <div>
+              <div style={{ display:'grid', gridTemplateColumns:'minmax(100px,1.5fr) repeat(4,1fr)', gap:0, marginBottom:6 }}>
+                {['Source','Leads','Won','EGP Won','Wt. Pipeline'].map(h => (
+                  <div key={h} style={{ fontSize:9, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.4px', padding:'4px 8px' }}>{h}</div>
+                ))}
+              </div>
+              {rows.map(([src, v]) => (
+                <div key={src}>
+                  <div style={{ display:'grid', gridTemplateColumns:'minmax(100px,1.5fr) repeat(4,1fr)', gap:0, borderTop:'1px solid #f5f5f5', alignItems:'center' }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:N, padding:'6px 8px' }}>{src}</div>
+                    <div style={{ fontSize:11, color:'#555', padding:'6px 8px' }}>{v.leads}</div>
+                    <div style={{ fontSize:11, color: v.wonLeads > 0 ? GR : '#aaa', fontWeight:700, padding:'6px 8px' }}>{v.wonLeads}</div>
+                    <div style={{ fontSize:11, color: v.egpWon > 0 ? GR : '#aaa', fontWeight:700, padding:'6px 8px' }}>{v.egpWon > 0 ? fmtEGP(v.egpWon) : '—'}</div>
+                    <div style={{ fontSize:11, color: v.weightedPipe > 0 ? T : '#aaa', padding:'6px 8px' }}>{v.weightedPipe > 0 ? fmtEGP(v.weightedPipe) : '—'}</div>
+                  </div>
+                  {v.egpWon > 0 && (
+                    <div style={{ margin:'0 8px 4px', background:'#e0e0e0', borderRadius:2, height:4, overflow:'hidden' }}>
+                      <div style={{ width:`${v.egpWon/maxEGP*100}%`, height:'100%', background:GR, borderRadius:2 }} />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </div>
+
       {/* Loss Analysis */}
       {lost.length > 0 && (
         <div style={{ ...CARD, padding:16, marginTop:16 }}>
@@ -1548,45 +1839,101 @@ const VelocityTab = ({ leads }) => {
               Open a lost lead → Stage Dossier tab → Deal Lost section to log loss reasons, competitor names, and lessons.
             </div>
           ) : (
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:16 }}>
-              {sortedLossReasons.length > 0 && (
+            <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+              {/* Technical vs Commercial split */}
+              {totalCategorised > 0 && (
                 <div>
-                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Loss Reasons</div>
-                  {sortedLossReasons.map(([reason, count]) => (
-                    <div key={reason} style={{ marginBottom:7 }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, marginBottom:2 }}>
-                        <span style={{ color:'#555' }}>{reason}</span>
-                        <span style={{ fontWeight:700, color:R }}>{count}</span>
+                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Loss Category Split</div>
+                  <div style={{ display:'flex', gap:0, borderRadius:4, overflow:'hidden', height:24, marginBottom:6 }}>
+                    {[
+                      { k:'Technical',     color:R     },
+                      { k:'Commercial',    color:AM    },
+                      { k:'Relationship',  color:T     },
+                      { k:'Other',         color:'#aaa'},
+                    ].filter(c => lossCategories[c.k] > 0).map(c => (
+                      <div key={c.k} title={`${c.k}: ${lossCategories[c.k]}`}
+                        style={{ flex: lossCategories[c.k], background: c.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:900, color:'#fff', whiteSpace:'nowrap', overflow:'hidden', padding:'0 4px' }}>
+                        {lossCategories[c.k] > 0 && `${c.k} ${lossCategories[c.k]}`}
                       </div>
-                      <div style={{ background:'#f5f5f5', borderRadius:3, height:6 }}>
-                        <div style={{ width:`${count/maxReasonCnt*100}%`, height:'100%', background:R, borderRadius:3 }} />
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                    {[
+                      { k:'Technical', color:R, label:'Technical site failures — site selection problem, not sales problem' },
+                      { k:'Commercial', color:AM, label:'Commercial — addressable via pricing, positioning, or timing' },
+                    ].filter(c => lossCategories[c.k] > 0).map(c => (
+                      <span key={c.k} style={{ fontSize:10, color:c.color, fontWeight:700 }}>
+                        {c.k}: {lossCategories[c.k]} — <span style={{ fontWeight:400, color:'#888' }}>{c.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:16 }}>
+                {sortedLossReasons.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Loss Reasons</div>
+                    {sortedLossReasons.map(([reason, count]) => {
+                      const isTech = reason.startsWith('Technical');
+                      return (
+                        <div key={reason} style={{ marginBottom:7 }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, marginBottom:2 }}>
+                            <span style={{ color: isTech ? R : '#555', fontWeight: isTech ? 700 : 400 }}>{reason}</span>
+                            <span style={{ fontWeight:700, color: isTech ? R : AM }}>{count}</span>
+                          </div>
+                          <div style={{ background:'#f5f5f5', borderRadius:3, height:6 }}>
+                            <div style={{ width:`${count/maxReasonCnt*100}%`, height:'100%', background: isTech ? R : AM, borderRadius:3 }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {sortedLossComps.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Competitors Encountered</div>
+                    {sortedLossComps.map(([name, count], i) => (
+                      <div key={name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'5px 0', borderBottom:i<sortedLossComps.length-1?'1px solid #f5f5f5':'none' }}>
+                        <span style={{ fontSize:11, color:'#555' }}>{name}</span>
+                        <span style={{ fontSize:11, fontWeight:900, color:R, background:'#fff5f5', borderRadius:3, padding:'1px 8px' }}>{count}×</span>
                       </div>
+                    ))}
+                  </div>
+                )}
+                {lossLessons.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Lessons Learned</div>
+                    {lossLessons.slice(0,4).map((item, i) => (
+                      <div key={i} style={{ padding:'6px 0', borderBottom:i<Math.min(lossLessons.length,4)-1?'1px solid #f5f5f5':'none' }}>
+                        <div style={{ fontSize:9, color:'#aaa', fontWeight:700, textTransform:'uppercase', letterSpacing:'.4px', marginBottom:2 }}>{item.org}</div>
+                        <div style={{ fontSize:11, color:'#555', lineHeight:1.4 }}>{item.lesson.slice(0,120)}{item.lesson.length>120?'…':''}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Blocking Findings — technical dead ends only */}
+              {blockingFindings.length > 0 && (
+                <div style={{ background:'#fff5f5', border:`1px solid ${R}33`, borderRadius:6, padding:'12px 14px' }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:R, marginBottom:8 }}>Technical Blocking Findings — Site Disqualifiers</div>
+                  <div style={{ fontSize:10, color:'#888', marginBottom:10 }}>
+                    These are not commercial losses. Use to update lead pre-screening criteria.
+                  </div>
+                  {blockingFindings.map((item, i) => (
+                    <div key={i} style={{ padding:'7px 0', borderBottom:i<blockingFindings.length-1?'1px solid #fde8e8':'none' }}>
+                      <div style={{ display:'flex', gap:8, alignItems:'baseline', flexWrap:'wrap', marginBottom:3 }}>
+                        <span style={{ fontSize:9, fontWeight:900, color:'#aaa', textTransform:'uppercase', letterSpacing:'.4px' }}>{item.org}</span>
+                        {item.reason && <span style={{ fontSize:9, fontWeight:800, color:R, background:'#fde8e8', borderRadius:3, padding:'1px 6px' }}>{item.reason}</span>}
+                      </div>
+                      <div style={{ fontSize:11, color:'#555', lineHeight:1.5 }}>{item.finding}</div>
                     </div>
                   ))}
                 </div>
               )}
-              {sortedLossComps.length > 0 && (
-                <div>
-                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Competitors Encountered</div>
-                  {sortedLossComps.map(([name, count], i) => (
-                    <div key={name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'5px 0', borderBottom:i<sortedLossComps.length-1?'1px solid #f5f5f5':'none' }}>
-                      <span style={{ fontSize:11, color:'#555' }}>{name}</span>
-                      <span style={{ fontSize:11, fontWeight:900, color:R, background:'#fff5f5', borderRadius:3, padding:'1px 8px' }}>{count}×</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {lossLessons.length > 0 && (
-                <div>
-                  <div style={{ fontSize:11, fontWeight:700, color:N, marginBottom:8 }}>Lessons Learned</div>
-                  {lossLessons.slice(0,4).map((item, i) => (
-                    <div key={i} style={{ padding:'6px 0', borderBottom:i<Math.min(lossLessons.length,4)-1?'1px solid #f5f5f5':'none' }}>
-                      <div style={{ fontSize:9, color:'#aaa', fontWeight:700, textTransform:'uppercase', letterSpacing:'.4px', marginBottom:2 }}>{item.org}</div>
-                      <div style={{ fontSize:11, color:'#555', lineHeight:1.4 }}>{item.lesson.slice(0,120)}{item.lesson.length>120?'…':''}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+
             </div>
           )}
         </div>
@@ -1678,7 +2025,8 @@ export const CRMView = () => {
   const [leadModal,    setLeadModal]    = useState(null); // null | 'new' | lead object
   const [tenderModal,  setTenderModal]  = useState(null);
   const [researchModal,setResearchModal]= useState(null);
-  const [dossierLead,  setDossierLead]  = useState(null);
+  const [dossierLead,     setDossierLead]     = useState(null);
+  const [salesAssistLead, setSalesAssistLead] = useState(null);
   const [pmAlerts, setPmAlerts] = useState([]);
 
   const syncLeads   = (next) => { setLeads(next);   saveLS(LS.leads,   next); };
@@ -1687,7 +2035,9 @@ export const CRMView = () => {
 
   const saveLead = (f) => {
     const oldLead = leads.find(l => l.id === f.id);
-    const next = leads.some(l=>l.id===f.id) ? leads.map(l=>l.id===f.id?f:l) : [...leads, f];
+    const stageChanged = !oldLead || oldLead.stage !== f.stage;
+    const fWithDate = stageChanged ? { ...f, stageEnteredDate: todayStr() } : f;
+    const next = leads.some(l=>l.id===f.id) ? leads.map(l=>l.id===f.id?fWithDate:l) : [...leads, fWithDate];
     syncLeads(next);
     if (f.stage === 'won' && (!oldLead || oldLead.stage !== 'won')) {
       const created = autoCreateProject(f);
@@ -1698,9 +2048,24 @@ export const CRMView = () => {
 
   const deleteLead = (id) => { syncLeads(leads.filter(l=>l.id!==id)); setLeadModal(null); };
 
+  const updateLead = (f) => {
+    const oldLead = leads.find(l => l.id === f.id);
+    const stageChanged = oldLead && oldLead.stage !== f.stage;
+    const next = leads.map(l => l.id === f.id ? f : l);
+    syncLeads(next);
+    if (salesAssistLead?.id === f.id) setSalesAssistLead(f);
+    if (stageChanged && PM_TRIGGERS[f.stage]) {
+      setPmAlerts(prev => [...prev, { stage: f.stage, leadName: f.orgName }]);
+    }
+  };
+
   const handleStageChange = (leadId, newStage, leadName) => {
     const oldLead = leads.find(l => l.id === leadId);
-    const next = leads.map(l => l.id===leadId ? { ...l, stage:newStage, probability:String(stageProb(newStage)) } : l);
+    const stageChanged = !oldLead || oldLead.stage !== newStage;
+    const next = leads.map(l => l.id===leadId ? {
+      ...l, stage:newStage, probability:String(stageProb(newStage)),
+      ...(stageChanged ? { stageEnteredDate: todayStr() } : {}),
+    } : l);
     syncLeads(next);
     if (PM_TRIGGERS[newStage]) {
       const wonLead = newStage === 'won' && (!oldLead || oldLead.stage !== 'won')
@@ -1764,10 +2129,10 @@ export const CRMView = () => {
         <CRMDashboard leads={leads} tenders={tenders} pmAlerts={pmAlerts} onClearAlert={i=>setPmAlerts(p=>p.filter((_,idx)=>idx!==i))} />
       )}
       {subTab === 'leads' && (
-        <LeadTable leads={leads} onEdit={setLeadModal} onAdd={()=>setLeadModal('new')} onExport={()=>exportLeadsCSV(leads)} onImport={handleImport} onDossier={setDossierLead} />
+        <LeadTable leads={leads} onEdit={setLeadModal} onAdd={()=>setLeadModal('new')} onExport={()=>exportLeadsCSV(leads)} onImport={handleImport} onDossier={setDossierLead} onSalesAssist={setSalesAssistLead} />
       )}
       {subTab === 'pipeline' && (
-        <CRMKanban leads={leads} onEdit={setLeadModal} onStageChange={handleStageChange} onDossier={setDossierLead} />
+        <CRMKanban leads={leads} onEdit={setLeadModal} onStageChange={handleStageChange} onDossier={setDossierLead} onSalesAssist={setSalesAssistLead} />
       )}
       {subTab === 'velocity' && <VelocityTab leads={leads} />}
       {subTab === 'tenders' && (
@@ -1811,6 +2176,14 @@ export const CRMView = () => {
           lead={dossierLead}
           onClose={() => setDossierLead(null)}
           onEdit={() => { setDossierLead(null); setLeadModal(dossierLead); }}
+        />
+      )}
+      {salesAssistLead && (
+        <SalesAssistModal
+          lead={salesAssistLead}
+          leads={leads}
+          onUpdateLead={updateLead}
+          onClose={() => setSalesAssistLead(null)}
         />
       )}
     </div>

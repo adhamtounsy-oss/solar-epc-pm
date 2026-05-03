@@ -8,6 +8,11 @@ const TASK_FOS_FLAGS = {
   'T-B1': 'bankAccountOpen',
   'T-R1': 'nreaSubmitted',
   'T-R2': 'egyptERASubmitted',
+  'T-L2': 'gafiRegistered',
+  'T-L3': 'taxRegistered',
+  'T-P1': 'syndicateRegistered',
+  'T-R3': 'discoPreRegistered',
+  'T-P3': 'lawyerEngaged',  // GAFI investment profile triggers lawyer engaged flag
 };
 
 // ── Phase definitions ──────────────────────────────────────────────────────────
@@ -401,6 +406,344 @@ function CommsLog({ log, onAdd, onDelete }) {
 const labelStyle = { fontSize: 10, fontWeight: 700, color: '#555', display: 'flex', flexDirection: 'column', gap: 3 };
 const inputStyle = { fontSize: 12, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontFamily: 'inherit', color: '#333' };
 
+// ── Supplier Address Book ──────────────────────────────────────────────────────
+const SUPPLIER_LS   = 'suppliers_v1';
+const SUPPLIER_CATS = ['Panels','Inverters','BOS / Mounting','DC Cabling','AC / Switchgear','Other'];
+const PAYMENT_TERMS = ['Upfront 100%','30/70','50/50','30/60/10','Net 30','Net 60','Custom'];
+const EMPTY_SUPPLIER = { name:'', category:'Panels', contactPerson:'', phone:'', whatsapp:'', email:'', paymentTerms:'50/50', leadTimeDays:'', priceNotes:'', notes:'', rating:0 };
+
+const loadSuppliers = () => { try { const s = localStorage.getItem(SUPPLIER_LS); return s ? JSON.parse(s) : []; } catch { return []; } };
+const saveSuppliers = (d) => { try { localStorage.setItem(SUPPLIER_LS, JSON.stringify(d)); } catch {} };
+
+const StarRating = ({ value, onChange }) => (
+  <div style={{ display:'flex', gap:3 }}>
+    {[1,2,3,4,5].map(n => (
+      <button key={n} onClick={() => onChange(n === value ? 0 : n)}
+        style={{ background:'none', border:'none', cursor:'pointer', fontSize:18, color: n <= value ? '#C8991A' : '#ddd', padding:0 }}>
+        ★
+      </button>
+    ))}
+  </div>
+);
+
+function SupplierModal({ supplier, onSave, onClose }) {
+  const [f, setF] = useState(supplier ? { ...supplier } : { ...EMPTY_SUPPLIER, id: `sup-${Date.now()}` });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const inp = { border:'1px solid #dde1e7', borderRadius:4, padding:'6px 9px', fontSize:12, fontFamily:'inherit', color:'#0D2137', width:'100%', boxSizing:'border-box' };
+  const lb  = { fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.4px', marginBottom:3, display:'block' };
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'40px 20px', overflowY:'auto' }}>
+      <div style={{ background:'#fff', borderRadius:8, width:'100%', maxWidth:560, boxShadow:'0 20px 60px rgba(0,0,0,.25)', marginBottom:40 }}>
+        <div style={{ background:'#0D2137', color:'#C8991A', padding:'14px 20px', borderRadius:'8px 8px 0 0', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div style={{ fontWeight:900, fontSize:13 }}>{supplier ? 'Edit Supplier' : 'Add Supplier'}</div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'#aaa', fontSize:20, cursor:'pointer' }}>×</button>
+        </div>
+        <div style={{ padding:20, display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div style={{ gridColumn:'1/-1' }}>
+            <label style={lb}>Company Name *</label>
+            <input style={inp} value={f.name} onChange={e=>set('name',e.target.value)} placeholder="e.g. SolarEdge Egypt" />
+          </div>
+          <div>
+            <label style={lb}>Category</label>
+            <select style={inp} value={f.category} onChange={e=>set('category',e.target.value)}>
+              {SUPPLIER_CATS.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lb}>Payment Terms</label>
+            <select style={inp} value={f.paymentTerms} onChange={e=>set('paymentTerms',e.target.value)}>
+              {PAYMENT_TERMS.map(t=><option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lb}>Contact Person</label>
+            <input style={inp} value={f.contactPerson} onChange={e=>set('contactPerson',e.target.value)} />
+          </div>
+          <div>
+            <label style={lb}>Lead Time (days)</label>
+            <input type="number" min="0" style={inp} value={f.leadTimeDays} onChange={e=>set('leadTimeDays',e.target.value)} placeholder="e.g. 21" />
+          </div>
+          <div>
+            <label style={lb}>Phone</label>
+            <input type="tel" style={inp} value={f.phone} onChange={e=>set('phone',e.target.value)} />
+          </div>
+          <div>
+            <label style={lb}>WhatsApp</label>
+            <input type="tel" style={inp} value={f.whatsapp} onChange={e=>set('whatsapp',e.target.value)} />
+          </div>
+          <div style={{ gridColumn:'1/-1' }}>
+            <label style={lb}>Email</label>
+            <input type="email" style={inp} value={f.email} onChange={e=>set('email',e.target.value)} />
+          </div>
+          <div style={{ gridColumn:'1/-1' }}>
+            <label style={lb}>Pricing Notes</label>
+            <textarea rows={2} style={{ ...inp, resize:'vertical' }} value={f.priceNotes} onChange={e=>set('priceNotes',e.target.value)} placeholder="Current panel price per Wp, inverter per kW, discount tiers, etc." />
+          </div>
+          <div style={{ gridColumn:'1/-1' }}>
+            <label style={lb}>Notes</label>
+            <textarea rows={2} style={{ ...inp, resize:'vertical' }} value={f.notes} onChange={e=>set('notes',e.target.value)} placeholder="Reliability, delivery experience, warranty support, etc." />
+          </div>
+          <div style={{ gridColumn:'1/-1' }}>
+            <label style={lb}>Rating</label>
+            <StarRating value={f.rating||0} onChange={v=>set('rating',v)} />
+          </div>
+        </div>
+        <div style={{ padding:'12px 20px', borderTop:'1px solid #eee', display:'flex', justifyContent:'flex-end', gap:8 }}>
+          <button onClick={onClose} style={{ padding:'7px 16px', background:'#f5f5f5', color:'#555', border:'none', borderRadius:4, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Cancel</button>
+          <button onClick={() => { if(f.name.trim()) onSave(f); }} style={{ padding:'7px 18px', background:'#0D2137', color:'#fff', border:'none', borderRadius:4, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SupplierBook() {
+  const [suppliers, setSuppliers] = useState(loadSuppliers);
+  const [modal, setModal]         = useState(null); // null | 'new' | supplier obj
+  const [filterCat, setFilterCat] = useState('All');
+
+  const save = (list) => { setSuppliers(list); saveSuppliers(list); };
+
+  const saveSupplier = (s) => {
+    save(suppliers.some(x=>x.id===s.id) ? suppliers.map(x=>x.id===s.id?s:x) : [...suppliers, s]);
+    setModal(null);
+  };
+  const del = (id) => { save(suppliers.filter(s=>s.id!==id)); };
+
+  const filtered = filterCat === 'All' ? suppliers : suppliers.filter(s=>s.category===filterCat);
+  const catCounts = SUPPLIER_CATS.reduce((acc, c) => ({ ...acc, [c]: suppliers.filter(s=>s.category===c).length }), {});
+
+  const CAT_COLOR = { 'Panels':'#1A6B72','Inverters':'#0D2137','BOS / Mounting':'#556678','DC Cabling':'#C8991A','AC / Switchgear':'#856404','Other':'#888' };
+
+  return (
+    <div style={{ background:'#fff', borderRadius:6, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#f5f7fa', borderBottom:'1px solid #e0e0e0', flexWrap:'wrap', gap:8 }}>
+        <span style={{ fontSize:13, fontWeight:700, color:'#0D2137' }}>Supplier Address Book</span>
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+            style={{ fontSize:11, padding:'3px 8px', border:'1px solid #ddd', borderRadius:4, fontFamily:'inherit' }}>
+            <option>All</option>
+            {SUPPLIER_CATS.map(c=><option key={c}>{c} ({catCounts[c]||0})</option>)}
+          </select>
+          <button onClick={()=>setModal('new')}
+            style={{ padding:'4px 12px', fontSize:11, fontWeight:700, background:'#0D2137', color:'#fff', border:'none', borderRadius:4, cursor:'pointer', fontFamily:'inherit' }}>
+            + Add Supplier
+          </button>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ padding:24, textAlign:'center', color:'#aaa', fontSize:12 }}>
+          {suppliers.length === 0 ? 'No suppliers yet. Add your panel, inverter, and BOS suppliers.' : 'No suppliers in this category.'}
+        </div>
+      ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:12, padding:14 }}>
+          {filtered.map(s => {
+            const cc = CAT_COLOR[s.category]||'#888';
+            return (
+              <div key={s.id} style={{ background:'#f8f9fa', borderRadius:6, padding:12, border:`1px solid #e8e8e8`, borderTop:`3px solid ${cc}`, position:'relative' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:'#0D2137', flex:1, lineHeight:1.2 }}>{s.name}</div>
+                  <span style={{ fontSize:9, fontWeight:700, color:cc, background:`${cc}22`, borderRadius:3, padding:'2px 6px', marginLeft:4, flexShrink:0 }}>{s.category}</span>
+                </div>
+                {s.rating > 0 && (
+                  <div style={{ fontSize:13, color:'#C8991A', marginBottom:4 }}>{'★'.repeat(s.rating)}{'☆'.repeat(5-s.rating)}</div>
+                )}
+                <div style={{ fontSize:10, color:'#555', lineHeight:1.6 }}>
+                  {s.contactPerson && <div>{s.contactPerson}</div>}
+                  {s.phone && <div>📞 {s.phone}</div>}
+                  {s.whatsapp && <div>💬 {s.whatsapp}</div>}
+                  {s.paymentTerms && <div>Payment: {s.paymentTerms}</div>}
+                  {s.leadTimeDays && <div>Lead time: {s.leadTimeDays}d</div>}
+                  {s.priceNotes && <div style={{ marginTop:4, color:'#888', fontStyle:'italic' }}>{s.priceNotes.slice(0,80)}{s.priceNotes.length>80?'…':''}</div>}
+                </div>
+                <div style={{ display:'flex', gap:6, marginTop:8 }}>
+                  {s.whatsapp && (
+                    <a href={`https://wa.me/${s.whatsapp.replace(/\D/g,'')}`} target="_blank" rel="noreferrer"
+                      style={{ padding:'3px 8px', background:'#25D366', color:'#fff', borderRadius:4, fontSize:10, fontWeight:700, textDecoration:'none' }}>
+                      WA
+                    </a>
+                  )}
+                  <button onClick={()=>setModal(s)} style={{ padding:'3px 8px', background:'#f0f2f5', color:'#555', border:'none', borderRadius:4, fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Edit</button>
+                  <button onClick={()=>{ if(window.confirm(`Delete ${s.name}?`)) del(s.id); }} style={{ padding:'3px 8px', background:'#fff5f5', color:'#C0392B', border:'none', borderRadius:4, fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {modal && (
+        <SupplierModal
+          supplier={modal === 'new' ? null : modal}
+          onSave={saveSupplier}
+          onClose={()=>setModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Risk Register ─────────────────────────────────────────────────────────────
+
+const RISK_LS = 'risk_register_v1';
+
+const DEFAULT_RISKS = [
+  { id:'R-1',  label:'FX devaluation (EGP/USD)',          category:'Financial',   probability:70, impactEGP:150000, mitigation:'FX escalation clause in all proposals. Monitor XE.com weekly.' },
+  { id:'R-2',  label:'DISCO approval delay (>60 days)',    category:'Regulatory',  probability:65, impactEGP:25000,  mitigation:'Submit DISCO application same day deposit clears. Chase at day 21.' },
+  { id:'R-3',  label:'Equipment price spike (panels/inv)', category:'Procurement', probability:50, impactEGP:80000,  mitigation:'Signed proforma invoice before contract. Lock price at deposit.' },
+  { id:'R-4',  label:'Client deposit default',             category:'Commercial',  probability:20, impactEGP:0,      mitigation:'No procurement orders before deposit clears. 30% deposit minimum.' },
+  { id:'R-5',  label:'Rework / installation defects',      category:'Execution',   probability:40, impactEGP:30000,  mitigation:'Phase sign-off gates. Subcontractor payment tied to QG completion.' },
+  { id:'R-6',  label:'NREA certificate delay',             category:'Regulatory',  probability:30, impactEGP:50000,  mitigation:'Submit by Day 60. Engage NREA liaison. Bronze tier for up to 500 kWp.' },
+  { id:'R-7',  label:'Subcontractor quality failure',      category:'Execution',   probability:35, impactEGP:20000,  mitigation:'Pre-qualify subcontractors. Punch list before final payment release.' },
+  { id:'R-8',  label:'Scope creep / undocumented changes', category:'Commercial',  probability:55, impactEGP:15000,  mitigation:'Change order log. Client sign-off for any change >2% of contract.' },
+  { id:'R-9',  label:'Cash flow gap (milestone delay)',     category:'Financial',   probability:45, impactEGP:40000,  mitigation:'30-day AR escalation. Overdraft facility pre-arranged at bank.' },
+  { id:'R-10', label:'Customs delay / HS code issue',      category:'Procurement', probability:25, impactEGP:20000,  mitigation:'Verify HS codes before ordering. Use bonded warehouse supplier.' },
+];
+
+const RISK_CATS   = ['Financial','Regulatory','Procurement','Commercial','Execution','Other'];
+const RISK_CAT_C  = { Financial:'#1A6B72', Regulatory:'#856404', Procurement:'#5C2D91', Commercial:'#1E7E34', Execution:'#C0392B', Other:'#888' };
+const PROB_LABELS = { 10:'Very Low', 25:'Low', 40:'Medium', 55:'High', 70:'Very High' };
+
+function RiskRegister() {
+  const loadRisks = () => {
+    try { const r = localStorage.getItem(RISK_LS); return r ? JSON.parse(r) : DEFAULT_RISKS.map(r=>({...r})); }
+    catch { return DEFAULT_RISKS.map(r=>({...r})); }
+  };
+  const saveRisks = (d) => { try { localStorage.setItem(RISK_LS, JSON.stringify(d)); } catch {} };
+
+  const [risks, setRisks] = useState(loadRisks);
+  const [editing, setEditing] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ label:'', category:'Financial', probability:40, impactEGP:'', mitigation:'' });
+  const setF = (k, v) => setForm(p => ({...p, [k]:v}));
+
+  const update = (next) => { setRisks(next); saveRisks(next); };
+
+  const sortedRisks = [...risks].sort((a,b) => {
+    const evA = a.probability / 100 * (Number(a.impactEGP)||0);
+    const evB = b.probability / 100 * (Number(b.impactEGP)||0);
+    return evB - evA;
+  });
+
+  const totalEV = risks.reduce((s,r) => s + r.probability / 100 * (Number(r.impactEGP)||0), 0);
+
+  const saveRisk = () => {
+    if (!form.label.trim()) return;
+    if (editing) {
+      update(risks.map(r => r.id===editing ? { ...r, ...form, impactEGP:Number(form.impactEGP)||0 } : r));
+      setEditing(null);
+    } else {
+      const id = `R-${Date.now()}`;
+      update([...risks, { id, ...form, impactEGP:Number(form.impactEGP)||0 }]);
+    }
+    setForm({ label:'', category:'Financial', probability:40, impactEGP:'', mitigation:'' });
+    setShowForm(false);
+  };
+
+  const startEdit = (r) => {
+    setForm({ label:r.label, category:r.category, probability:r.probability, impactEGP:String(r.impactEGP), mitigation:r.mitigation });
+    setEditing(r.id);
+    setShowForm(true);
+  };
+
+  const del = (id) => { if (window.confirm('Remove this risk?')) update(risks.filter(r=>r.id!==id)); };
+
+  const inp2 = { border:'1px solid #dde1e7', borderRadius:4, padding:'6px 9px', fontSize:12, fontFamily:'inherit', color:'#0D2137', width:'100%', boxSizing:'border-box' };
+  const lbl2 = { fontSize:10, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.4px', marginBottom:3, display:'block' };
+
+  const fmtEGP = (n) => { const v=Number(n||0); if(v>=1e6) return `EGP ${(v/1e6).toFixed(1)}M`; if(v>=1000) return `EGP ${Math.round(v/1000)}K`; return `EGP ${v.toLocaleString()}`; };
+
+  return (
+    <div style={{ background:'#fff', borderRadius:6, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+      {/* Header */}
+      <div style={{ background:'#f8f9fa', borderBottom:'1px solid #e0e0e0', padding:'12px 16px', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+        <div>
+          <div style={{ fontSize:12, fontWeight:900, color:'#0D2137', textTransform:'uppercase', letterSpacing:'.5px' }}>Risk Register</div>
+          {totalEV > 0 && <div style={{ fontSize:10, color:'#888', marginTop:2 }}>Total expected exposure: <b style={{ color:'#C0392B' }}>{fmtEGP(totalEV)}</b> · sorted by financial exposure</div>}
+        </div>
+        <button onClick={() => { setEditing(null); setForm({ label:'', category:'Financial', probability:40, impactEGP:'', mitigation:'' }); setShowForm(v=>!v); }}
+          style={{ padding:'5px 14px', background:'#0D2137', color:'#fff', border:'none', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+          {showForm && !editing ? 'Cancel' : '+ Add Risk'}
+        </button>
+      </div>
+
+      {/* Form */}
+      {showForm && (
+        <div style={{ padding:14, background:'#fffbee', borderBottom:'1px solid #ffe082' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10, marginBottom:10 }}>
+            <div style={{ gridColumn:'1/-1' }}>
+              <label style={lbl2}>Risk Description <span style={{ color:'#C0392B' }}>*</span></label>
+              <input style={inp2} value={form.label} onChange={e=>setF('label',e.target.value)} placeholder="e.g. Equipment supplier defaults on delivery" />
+            </div>
+            <div>
+              <label style={lbl2}>Category</label>
+              <select style={inp2} value={form.category} onChange={e=>setF('category',e.target.value)}>
+                {RISK_CATS.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lbl2}>Probability (%)</label>
+              <input type="number" min="1" max="99" style={inp2} value={form.probability} onChange={e=>setF('probability',parseInt(e.target.value)||1)} placeholder="e.g. 40" />
+            </div>
+            <div>
+              <label style={lbl2}>Impact (EGP)</label>
+              <input type="number" min="0" style={inp2} value={form.impactEGP} onChange={e=>setF('impactEGP',e.target.value)} placeholder="e.g. 50000" />
+            </div>
+            <div style={{ gridColumn:'1/-1' }}>
+              <label style={lbl2}>Mitigation</label>
+              <input style={inp2} value={form.mitigation} onChange={e=>setF('mitigation',e.target.value)} placeholder="How to reduce probability or impact" />
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={saveRisk} style={{ padding:'6px 14px', background:'#0D2137', color:'#fff', border:'none', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+              {editing ? 'Save Changes' : 'Add Risk'}
+            </button>
+            <button onClick={() => { setShowForm(false); setEditing(null); }} style={{ padding:'6px 14px', background:'#f5f5f5', color:'#555', border:'none', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Risk list */}
+      <div style={{ padding:'0 16px' }}>
+        {sortedRisks.length === 0 ? (
+          <div style={{ padding:'20px 0', fontSize:11, color:'#bbb' }}>No risks logged. Add risks above.</div>
+        ) : (
+          sortedRisks.map((r, i) => {
+            const ev      = Math.round(r.probability / 100 * (Number(r.impactEGP)||0));
+            const cc      = RISK_CAT_C[r.category] || '#888';
+            const probC   = r.probability >= 60 ? '#C0392B' : r.probability >= 40 ? '#856404' : '#1a7a3f';
+            return (
+              <div key={r.id} style={{ padding:'10px 0', borderBottom: i<sortedRisks.length-1?'1px solid #f0f0f0':'none' }}>
+                <div style={{ display:'flex', gap:8, alignItems:'flex-start', marginBottom:4 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:3 }}>
+                      <span style={{ fontSize:10, fontWeight:800, color:'#aaa' }}>{r.id}</span>
+                      <span style={{ fontSize:9, fontWeight:700, color:cc, background:`${cc}18`, borderRadius:3, padding:'1px 6px' }}>{r.category}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:'#0D2137' }}>{r.label}</span>
+                    </div>
+                    <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                      <span style={{ fontSize:10, fontWeight:700, color:probC }}>P: {r.probability}%</span>
+                      {r.impactEGP > 0 && <span style={{ fontSize:10, color:'#888' }}>Impact: {fmtEGP(r.impactEGP)}</span>}
+                      {ev > 0 && <span style={{ fontSize:10, fontWeight:700, color:'#C0392B' }}>EV: {fmtEGP(ev)}</span>}
+                    </div>
+                    {r.mitigation && <div style={{ fontSize:10, color:'#1A6B72', marginTop:4 }}>→ {r.mitigation}</div>}
+                  </div>
+                  <div style={{ display:'flex', gap:4, flexShrink:0 }}>
+                    <button onClick={() => startEdit(r)} style={{ padding:'2px 8px', background:'#f0f2f5', color:'#555', border:'none', borderRadius:4, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Edit</button>
+                    <button onClick={() => del(r.id)} style={{ padding:'2px 8px', background:'#fff5f5', color:'#C0392B', border:'none', borderRadius:4, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>✕</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Summary bar ────────────────────────────────────────────────────────────────
 
 function SummaryBar({ tasks }) {
@@ -540,6 +883,10 @@ export function SetupView() {
       })}
 
       <CommsLog log={state.commsLog} onAdd={addComm} onDelete={deleteComm} />
+
+      <SupplierBook />
+
+      <RiskRegister />
 
     </div>
   );

@@ -116,21 +116,29 @@ const InputPanel = ({ state, onUpdate, onClose }) => {
           <label style={lbl}>Technicians on Payroll</label>
           <input type="number" min="0" max="20" style={inp} value={f.headcount?.numTechnicians||0} onChange={e=>setHC('numTechnicians',e.target.value)} />
         </div>
+        <div>
+          <label style={lbl}>USD/EGP Rate</label>
+          <input type="number" min="1" style={inp} value={f.currentUSDEGP||50} onChange={e=>set('currentUSDEGP',parseFloat(e.target.value)||50)} />
+        </div>
       </div>
 
       <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:16 }}>
         {[
-          { k:'engineerHired',    label:'Engineer Hired' },
-          { k:'bankAccountOpen',  label:'Bank Account Open' },
-          { k:'lawyerEngaged',    label:'Lawyer Engaged' },
-          { k:'nreaSubmitted',    label:'NREA Submitted' },
-          { k:'egyptERASubmitted',label:'EgyptERA Submitted' },
-          { k:'fxAlertActive',    label:'FX Alert Active' },
-          { k:'depositCollected', label:'Deposit Collected' },
-          { k:'discoSubmitted',   label:'DISCO Submitted' },
-          { k:'overdraftActive',  label:'Overdraft Active' },
-          { k:'depositRefused',   label:'Client Refused Deposit' },
-          { k:'nreaReportOverdue',label:'NREA Report Overdue' },
+          { k:'gafiRegistered',     label:'GAFI Registry Done' },
+          { k:'taxRegistered',      label:'Tax Registration Done' },
+          { k:'syndicateRegistered',label:'Syndicate Registered' },
+          { k:'discoPreRegistered', label:'DISCO Pre-Registered' },
+          { k:'engineerHired',      label:'Engineer Hired' },
+          { k:'bankAccountOpen',    label:'Bank Account Open' },
+          { k:'lawyerEngaged',      label:'Lawyer Engaged' },
+          { k:'nreaSubmitted',      label:'NREA Submitted' },
+          { k:'egyptERASubmitted',  label:'EgyptERA Submitted' },
+          { k:'fxAlertActive',      label:'FX Alert Active' },
+          { k:'depositCollected',   label:'Deposit Collected' },
+          { k:'discoSubmitted',     label:'DISCO Submitted' },
+          { k:'overdraftActive',    label:'Overdraft Active' },
+          { k:'depositRefused',     label:'Client Refused Deposit' },
+          { k:'nreaReportOverdue',  label:'NREA Report Overdue' },
         ].map(({ k, label }) => (
           <label key={k} style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:12, userSelect:'none' }}>
             <input type="checkbox" checked={f[k]||false} onChange={e=>set(k,e.target.checked)}
@@ -707,6 +715,413 @@ const NREACapacityCard = ({ leads }) => {
   );
 };
 
+// ── FX Exposure Card ──────────────────────────────────────────────────────────
+const FXExposureCard = ({ leads, fosState }) => {
+  const usdRate = parseFloat(fosState?.currentUSDEGP) || 50;
+  const proposals = leads.filter(l => ['proposal_sent','negotiation'].includes(l.stage));
+  const totalPropEGP = proposals.reduce((s,l) => s + (parseFloat(l.dealValue)||0), 0);
+  const totalUSD = totalPropEGP / usdRate;
+  const up5 = totalUSD * (usdRate * 1.05);
+  const dn5 = totalUSD * (usdRate * 0.95);
+  const delta = up5 - totalPropEGP;
+
+  return (
+    <Card accent={C.amber}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+        <SHead label="FX Exposure" color={C.amber} />
+        <Tag label={`USD/EGP ${usdRate}`} color={C.amber} bg='#fff3cd' />
+      </div>
+      <div style={{ display:'flex', gap:14, marginBottom:12, flexWrap:'wrap' }}>
+        <div>
+          <div style={{ fontSize:9, color:'#aaa', textTransform:'uppercase', letterSpacing:'.5px' }}>Open Proposals</div>
+          <div style={{ fontSize:18, fontWeight:900, color:C.navy, lineHeight:1 }}>{fmtEgpShort(totalPropEGP)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:9, color:'#aaa', textTransform:'uppercase', letterSpacing:'.5px' }}>≈ USD</div>
+          <div style={{ fontSize:18, fontWeight:900, color:C.amber, lineHeight:1 }}>${Math.round(totalUSD).toLocaleString()}</div>
+        </div>
+      </div>
+      {totalPropEGP > 0 && (
+        <div style={{ fontSize:10, color:'#555', background:'#fff8e8', borderRadius:4, padding:'7px 10px', lineHeight:1.6 }}>
+          If EGP weakens 5%: <b style={{ color:C.green }}>+{fmtEgpShort(delta)}</b> revenue<br />
+          If EGP strengthens 5%: <b style={{ color:C.red }}>−{fmtEgpShort(delta)}</b> revenue<br />
+          <span style={{ fontSize:9, color:'#aaa' }}>FX clause in proposals protects against downside.</span>
+        </div>
+      )}
+      {proposals.length === 0 && (
+        <div style={{ fontSize:11, color:'#aaa' }}>No open proposals. FX risk is zero.</div>
+      )}
+      <div style={{ marginTop:8, fontSize:9, color:'#aaa' }}>
+        {proposals.length} proposal{proposals.length!==1?'s':''} outstanding · Update rate in Status panel
+      </div>
+    </Card>
+  );
+};
+
+// ── 90-Day Cashflow Strip ──────────────────────────────────────────────────────
+const CashflowStrip = () => {
+  const projects = (() => { try { return JSON.parse(localStorage.getItem('projects_v1')||'[]'); } catch { return []; } })();
+  const today    = new Date();
+  const months   = [0,1,2].map(offset => {
+    const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    return { label: d.toLocaleString('default',{month:'short',year:'2-digit'}), key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, inflow:0 };
+  });
+
+  projects.forEach(p => {
+    (p.milestones||[]).forEach(m => {
+      if (!m.dueDate || m.status === 'received') return;
+      const mk = m.dueDate.slice(0,7);
+      const mo = months.find(mo => mo.key === mk);
+      if (mo) mo.inflow += Number(m.amount)||0;
+    });
+  });
+
+  const maxInflow = Math.max(...months.map(m=>m.inflow), 1);
+
+  return (
+    <Card accent={C.teal}>
+      <SHead label="90-Day Expected Inflows" color={C.teal} />
+      <div style={{ display:'flex', gap:12, alignItems:'flex-end', height:80, marginBottom:8 }}>
+        {months.map(m => {
+          const pct = m.inflow / maxInflow;
+          return (
+            <div key={m.key} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
+              <div style={{ fontSize:10, fontWeight:700, color: m.inflow>0 ? C.teal : '#ccc' }}>{m.inflow > 0 ? fmtEgpShort(m.inflow) : '—'}</div>
+              <div style={{ width:'100%', height:`${Math.max(4, pct*60)}px`, background: m.inflow>0 ? C.teal : '#e0e0e0', borderRadius:'3px 3px 0 0' }} />
+              <div style={{ fontSize:10, color:'#888', fontWeight:700 }}>{m.label}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize:10, color:'#aaa' }}>
+        Based on pending milestone due dates · received milestones excluded
+      </div>
+    </Card>
+  );
+};
+
+// ── Equipment COGS Card ────────────────────────────────────────────────────────
+const COGSCard = () => {
+  const LS_PRICE = 'pricing_state_v1';
+  const INIT_PRICE = { panelEgpWp:7.0, inverterEgpKw:1800, bosEgpKwp:640, installEgpKwp:400, usdEgp:50 };
+  const [price, setPrice] = useState(() => {
+    try { const s = localStorage.getItem(LS_PRICE); return s ? { ...INIT_PRICE, ...JSON.parse(s) } : INIT_PRICE; } catch { return INIT_PRICE; }
+  });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(price);
+
+  const savePrice = () => {
+    setPrice(draft);
+    try { localStorage.setItem(LS_PRICE, JSON.stringify(draft)); } catch {}
+    setEditing(false);
+  };
+
+  const projects = (() => { try { return JSON.parse(localStorage.getItem('projects_v1')||'[]'); } catch { return []; } })();
+  const active   = projects.filter(p => !['complete','on_hold'].includes(p.status) && parseFloat(p.systemSizeKW) > 0);
+
+  const cogs = (kWp) => {
+    const kW = kWp;
+    return Math.round(
+      kWp * 1000 * price.panelEgpWp +
+      kW  * price.inverterEgpKw +
+      kWp * price.bosEgpKwp +
+      kWp * price.installEgpKwp
+    );
+  };
+
+  const inp2 = { border:'1px solid #dde1e7', borderRadius:4, padding:'5px 8px', fontSize:12, fontFamily:'inherit', color:C.navy, width:'100%', boxSizing:'border-box' };
+
+  return (
+    <Card accent={C.navy}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+        <SHead label="Equipment COGS Tracker" color={C.navy} />
+        <button onClick={()=>{ setDraft(price); setEditing(v=>!v); }}
+          style={{ fontSize:10, padding:'3px 10px', background:editing?'#f5f5f5':C.navy, color:editing?C.navy:'#fff', border:`1px solid ${C.navy}`, borderRadius:4, cursor:'pointer', fontFamily:'inherit', fontWeight:700 }}>
+          {editing ? 'Cancel' : 'Edit Rates'}
+        </button>
+      </div>
+
+      {editing && (
+        <div style={{ background:'#f8f9fa', borderRadius:6, padding:12, marginBottom:12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))', gap:8, marginBottom:10 }}>
+            {[
+              { k:'panelEgpWp',    label:'Panel (EGP/Wp)' },
+              { k:'inverterEgpKw', label:'Inverter (EGP/kW)' },
+              { k:'bosEgpKwp',     label:'BOS (EGP/kWp)' },
+              { k:'installEgpKwp', label:'Install (EGP/kWp)' },
+            ].map(({ k, label }) => (
+              <div key={k}>
+                <label style={{ fontSize:9, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:'.4px', marginBottom:3, display:'block' }}>{label}</label>
+                <input type="number" style={inp2} value={draft[k]||''} onChange={e=>setDraft(p=>({...p,[k]:parseFloat(e.target.value)||0}))} />
+              </div>
+            ))}
+          </div>
+          <button onClick={savePrice} style={{ padding:'6px 14px', background:C.navy, color:'#fff', border:'none', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Save</button>
+        </div>
+      )}
+
+      {active.length === 0 ? (
+        <div style={{ fontSize:11, color:'#aaa' }}>No active projects with system size set.</div>
+      ) : (
+        active.map(p => {
+          const kWp  = parseFloat(p.systemSizeKW);
+          const cost = cogs(kWp);
+          const cv   = Number(p.contractValue)||0;
+          const gp   = cv - cost;
+          const gpPct= cv > 0 ? Math.round(gp/cv*100) : null;
+          return (
+            <div key={p.id} style={{ padding:'9px 0', borderBottom:'1px solid #f0f2f5' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:C.navy, flex:1 }}>{p.name || p.clientName}</div>
+                <Tag label={`${kWp} kWp`} color={C.teal} bg='#e8f8f9' />
+              </div>
+              <div style={{ display:'flex', gap:12, marginTop:4, flexWrap:'wrap' }}>
+                <div style={{ fontSize:11, color:'#555' }}>COGS: <b>{fmtEgpShort(cost)}</b></div>
+                {cv > 0 && <div style={{ fontSize:11, color:'#555' }}>Contract: <b>{fmtEgpShort(cv)}</b></div>}
+                {gpPct !== null && (
+                  <div style={{ fontSize:11, fontWeight:700, color: gp >= 0 ? C.green : C.red }}>
+                    GP: {fmtEgpShort(Math.abs(gp))} ({gpPct}%)
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
+      <div style={{ marginTop:8, fontSize:9, color:'#aaa' }}>Panels + inverter + BOS + installation at current rates</div>
+    </Card>
+  );
+};
+
+// ── Weighted Pipeline by Month ─────────────────────────────────────────────────
+const PipelineByMonth = ({ leads }) => {
+  const today = new Date();
+  const months = [0,1,2].map(offset => {
+    const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    return { label: d.toLocaleString('default',{month:'short',year:'2-digit'}), key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, value:0, count:0 };
+  });
+
+  leads.filter(l => !['won','lost','nurture'].includes(l.stage) && l.nextFollowUp).forEach(l => {
+    const mk = l.nextFollowUp.slice(0,7);
+    const mo = months.find(m => m.key === mk);
+    if (mo) {
+      mo.value += (parseFloat(l.dealValue)||0) * (stageProb ? stageProb(l.stage) : 0) / 100;
+      mo.count++;
+    }
+  });
+
+  const maxVal = Math.max(...months.map(m=>m.value), 1);
+
+  return (
+    <Card accent={C.green}>
+      <SHead label="Weighted Pipeline by Close Month" color={C.green} />
+      <div style={{ display:'flex', gap:12, alignItems:'flex-end', height:72, marginBottom:8 }}>
+        {months.map(m => {
+          const pct = m.value / maxVal;
+          return (
+            <div key={m.key} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
+              <div style={{ fontSize:10, fontWeight:700, color: m.value>0 ? C.green : '#ccc' }}>{m.value>0 ? fmtEgpShort(m.value) : '—'}</div>
+              <div style={{ width:'100%', height:`${Math.max(4, pct*52)}px`, background: m.value>0 ? C.green : '#e0e0e0', borderRadius:'3px 3px 0 0' }} />
+              <div style={{ fontSize:10, color:'#888', fontWeight:700 }}>{m.label}</div>
+              {m.count > 0 && <div style={{ fontSize:9, color:'#aaa' }}>{m.count} lead{m.count!==1?'s':''}</div>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize:10, color:'#aaa' }}>
+        Uses next follow-up date as expected close · probability-weighted
+      </div>
+    </Card>
+  );
+};
+
+// ── Project Operations Card ───────────────────────────────────────────────────
+const ProjectOpsCard = () => {
+  const projects = (() => { try { return JSON.parse(localStorage.getItem('projects_v1')||'[]'); } catch { return []; } })();
+  const active   = projects.filter(p => !['complete','on_hold'].includes(p.status));
+  const today    = new Date();
+
+  const alerts = [];
+
+  for (const p of active) {
+    const client = p.clientName || p.name;
+    const commsLog = p.commsLog || [];
+    const lastComms = commsLog.length > 0 ? commsLog.reduce((m,e)=>e.date>m?e.date:m,'') : null;
+    const daysSince = lastComms ? Math.floor((today - new Date(lastComms)) / 86400000) : null;
+    if (['in_progress','commissioning'].includes(p.status)) {
+      if (daysSince === null) alerts.push({ level:'warn', msg:`No contact logged — ${client}`, type:'comms' });
+      else if (daysSince > 14) alerts.push({ level:'critical', msg:`${daysSince}d without client contact — ${client}`, type:'comms' });
+      else if (daysSince > 7) alerts.push({ level:'warn', msg:`${daysSince}d since last contact — ${client}`, type:'comms' });
+    }
+
+    if (p.discoSubmittedDate && !p.discoApprovedDate) {
+      const days = Math.floor((today - new Date(p.discoSubmittedDate)) / 86400000);
+      if (days >= 21) alerts.push({ level:'critical', msg:`DISCO pending ${days}d — chase now — ${client}`, type:'disco' });
+      else if (days >= 14) alerts.push({ level:'warn', msg:`DISCO pending ${days}d — ${client}`, type:'disco' });
+    }
+
+    const unsigned = (p.changeOrders||[]).filter(co => !co.clientSigned);
+    if (unsigned.length > 0) alerts.push({ level:'warn', msg:`${unsigned.length} unsigned change order${unsigned.length>1?'s':''} — ${client}`, type:'co' });
+
+    const cv = Number(p.contractValue)||0;
+    if (cv > 0) {
+      const contBudget  = cv * (Number(p.contingencyBudgetPct)||20) / 100;
+      const reworkTotal = (p.costs||[]).filter(c=>c.category==='rework').reduce((s,c)=>s+(Number(c.amount)||0),0);
+      const remPct      = Math.round((contBudget - reworkTotal) / contBudget * 100);
+      if (remPct < 5) alerts.push({ level:'critical', msg:`Contingency exhausted (${remPct}% left) — ${client}`, type:'contingency' });
+      else if (remPct < 10) alerts.push({ level:'warn', msg:`Low contingency (${remPct}% left) — ${client}`, type:'contingency' });
+    }
+  }
+
+  const levelColor = { critical:C.red, warn:C.amber };
+  const typeIcon   = { comms:'💬', disco:'⚡', co:'📝', contingency:'🛡' };
+
+  return (
+    <Card accent={alerts.some(a=>a.level==='critical') ? C.red : alerts.length > 0 ? C.amber : C.teal}>
+      <SHead label="Project Operations Alerts" color={alerts.some(a=>a.level==='critical') ? C.red : C.amber} />
+      {alerts.length === 0 ? (
+        <div style={{ fontSize:12, color:'#888', fontStyle:'italic' }}>All projects: contact current, DISCO tracked, no governance issues.</div>
+      ) : (
+        alerts.map((a, i) => (
+          <div key={i} style={{ display:'flex', gap:8, padding:'7px 0', borderBottom: i<alerts.length-1?'1px solid #f0f2f5':'none', alignItems:'flex-start' }}>
+            <span style={{ fontSize:13, flexShrink:0 }}>{typeIcon[a.type]||'⚠'}</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:levelColor[a.level]||C.navy, lineHeight:1.4 }}>{a.msg}</div>
+            </div>
+            <Tag label={a.level.toUpperCase()} color={levelColor[a.level]} bg={a.level==='critical'?'#fff5f5':'#fff3cd'} />
+          </div>
+        ))
+      )}
+      <div style={{ marginTop:8, fontSize:9, color:'#aaa' }}>
+        {active.length} active project{active.length!==1?'s':''} · Contact &gt;7d amber, &gt;14d red · DISCO &gt;14d warn, &gt;21d critical
+      </div>
+    </Card>
+  );
+};
+
+// ── Quality Metrics Card ──────────────────────────────────────────────────────
+const QualityMetricsCard = () => {
+  const projects = (() => { try { return JSON.parse(localStorage.getItem('projects_v1')||'[]'); } catch { return []; } })();
+  const EG_PSH   = [4.1,4.8,5.7,6.6,7.0,7.3,7.1,6.9,6.5,5.6,4.5,3.9];
+
+  // FTR rate — punch list 100% at commissioning across completed projects
+  const completedWithPunch = projects.filter(p => p.status === 'complete' && p.punchList?.length > 0);
+  const ftrCount  = completedWithPunch.filter(p => p.punchList.every(i => i.done)).length;
+  const ftrRate   = completedWithPunch.length > 0 ? Math.round(ftrCount / completedWithPunch.length * 100) : null;
+
+  // Average PR across all yield-logged projects
+  const prValues = [];
+  for (const p of projects) {
+    const kWp = parseFloat(p.systemSizeKW)||0;
+    if (!kWp || !p.yieldLog?.length) continue;
+    for (const e of p.yieldLog) {
+      const actual = parseFloat(e.actualKwh)||0;
+      if (!actual) continue;
+      const mo = parseInt(e.month.slice(5,7));
+      const yr = parseInt(e.month.slice(0,4));
+      const days = new Date(yr, mo, 0).getDate();
+      const psh  = EG_PSH[mo-1];
+      const pr   = actual / (kWp * psh * days) * 100;
+      if (isFinite(pr) && pr > 0) prValues.push(Math.round(pr));
+    }
+  }
+  const avgPR = prValues.length > 0 ? Math.round(prValues.reduce((s,v)=>s+v,0)/prValues.length) : null;
+
+  // Rework % across active projects
+  const activeWithCosts = projects.filter(p => !['on_hold'].includes(p.status) && Number(p.contractValue)>0);
+  const totalCV      = activeWithCosts.reduce((s,p)=>s+(Number(p.contractValue)||0),0);
+  const totalRework  = activeWithCosts.reduce((s,p)=>s+(p.costs||[]).filter(c=>c.category==='rework').reduce((r,c)=>r+(Number(c.amount)||0),0),0);
+  const reworkPct    = totalCV > 0 ? Math.round(totalRework / totalCV * 100) : null;
+
+  const metrics = [
+    ...(ftrRate !== null ? [{ label:'FTR Rate', value:`${ftrRate}%`, sub:`${ftrCount}/${completedWithPunch.length} projects pass on first commissioning`, color:ftrRate>=90?C.green:ftrRate>=75?C.amber:C.red, benchmark:'Target: ≥90%' }] : []),
+    ...(avgPR !== null ? [{ label:'Avg Performance Ratio', value:`${avgPR}%`, sub:`Across ${prValues.length} monthly readings (IEC 61724)`, color:avgPR>=78?C.green:avgPR>=70?C.amber:C.red, benchmark:'Egypt benchmark: 78–85%' }] : []),
+    ...(reworkPct !== null ? [{ label:'Rework Cost', value:`${reworkPct}%`, sub:`${fmtEgpShort(totalRework)} of ${fmtEgpShort(totalCV)} total contracts`, color:reworkPct>5?C.red:reworkPct>2?C.amber:C.green, benchmark:'Target: <5% of contract' }] : []),
+  ];
+
+  return (
+    <Card accent={C.teal}>
+      <SHead label="Quality Metrics" color={C.teal} />
+      {metrics.length === 0 ? (
+        <div style={{ fontSize:11, color:'#aaa' }}>Complete projects with punch lists and yield logs to see quality metrics.</div>
+      ) : (
+        metrics.map((m, i) => (
+          <div key={m.label} style={{ padding:'10px 0', borderBottom: i<metrics.length-1?'1px solid #f0f2f5':'none' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:C.navy }}>{m.label}</div>
+              <div style={{ fontSize:20, fontWeight:900, color:m.color, lineHeight:1 }}>{m.value}</div>
+            </div>
+            <div style={{ fontSize:10, color:'#888', marginBottom:3 }}>{m.sub}</div>
+            <div style={{ fontSize:9, color:m.color, fontWeight:700 }}>{m.benchmark}</div>
+          </div>
+        ))
+      )}
+      {metrics.length === 0 && <div style={{ fontSize:9, color:'#ccc', marginTop:8 }}>PR tracked per IEC 61724 · FTR = punch list 100% at commissioning</div>}
+    </Card>
+  );
+};
+
+// ── NPS Card ──────────────────────────────────────────────────────────────────
+const NPSCard = () => {
+  const projects  = (() => { try { return JSON.parse(localStorage.getItem('projects_v1')||'[]'); } catch { return []; } })();
+  const scored    = projects.filter(p => p.status === 'complete' && p.npsScore !== null);
+  const unscored  = projects.filter(p => p.status === 'complete' && p.npsScore === null);
+  const promoters = scored.filter(p => p.npsScore >= 9).length;
+  const passives  = scored.filter(p => p.npsScore >= 7 && p.npsScore <= 8).length;
+  const detractors= scored.filter(p => p.npsScore <= 6).length;
+  const nps       = scored.length > 0 ? Math.round((promoters - detractors) / scored.length * 100) : null;
+  const avgScore  = scored.length > 0 ? (scored.reduce((s,p)=>s+p.npsScore,0)/scored.length).toFixed(1) : null;
+
+  return (
+    <Card accent={nps !== null && nps >= 30 ? C.green : C.amber}>
+      <SHead label="Client Recommendation Score" color={nps !== null && nps >= 30 ? C.green : C.amber} />
+      {scored.length === 0 ? (
+        <div style={{ fontSize:11, color:'#aaa' }}>
+          {unscored.length > 0
+            ? `${unscored.length} completed project${unscored.length>1?'s':''} without a recommendation score. Log in Projects → Comms tab.`
+            : 'No completed projects yet. Recommendation score is captured when a project is marked complete.'}
+        </div>
+      ) : (
+        <>
+          <div style={{ display:'flex', gap:16, marginBottom:12, flexWrap:'wrap' }}>
+            <div>
+              <div style={{ fontSize:9, color:'#aaa', textTransform:'uppercase', letterSpacing:'.5px' }}>Recommendation Score</div>
+              <div style={{ fontSize:26, fontWeight:900, color:nps>=50?C.green:nps>=30?C.teal:nps>=0?C.amber:C.red, lineHeight:1 }}>{nps}</div>
+              <div style={{ fontSize:9, color:'#aaa' }}>B2B benchmark: 30–50 (industry)</div>
+            </div>
+            <div>
+              <div style={{ fontSize:9, color:'#aaa', textTransform:'uppercase', letterSpacing:'.5px' }}>Avg Score</div>
+              <div style={{ fontSize:26, fontWeight:900, color:C.navy, lineHeight:1 }}>{avgScore}</div>
+              <div style={{ fontSize:9, color:'#aaa' }}>/10</div>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+            {[
+              { label:'Will refer (9–10)',     count:promoters,  color:C.green },
+              { label:'Satisfied (7–8)',       count:passives,   color:C.amber },
+              { label:'Unlikely to refer (≤6)',count:detractors, color:C.red   },
+            ].map(b => (
+              <div key={b.label} style={{ flex:1, background:'#f8f9fa', borderRadius:4, padding:'6px 8px', borderBottom:`2px solid ${b.color}` }}>
+                <div style={{ fontSize:9, color:'#aaa', marginBottom:2, lineHeight:1.3 }}>{b.label}</div>
+                <div style={{ fontSize:16, fontWeight:900, color:b.color }}>{b.count}</div>
+              </div>
+            ))}
+          </div>
+          {unscored.length > 0 && (
+            <div style={{ fontSize:10, color:C.amber, fontWeight:600 }}>⚠ {unscored.length} completed project{unscored.length>1?'s':''} without recommendation score — log in Projects → Comms</div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ── stageProb helper (local to ControlCenter file) ────────────────────────────
+const stageProb = (stageId) => {
+  const probs = { unqualified:5, contacted:15, qualified:30, site_visit_scheduled:45, site_visit_completed:55, feasibility_proposed:60, feasibility_sold:70, feasibility_delivered:75, proposal_sent:50, negotiation:70, won:100, lost:0, nurture:10 };
+  return probs[stageId] ?? 0;
+};
+
 // ── Main ControlCenter ─────────────────────────────────────────────────────────
 export const ControlCenter = () => {
   const [fosState, setFosState] = useState(() => {
@@ -846,7 +1261,15 @@ export const ControlCenter = () => {
         <TrelloPanel engineState={sys} leads={leads} onCRMUpdate={handleCRMUpdate} />
       </Card>
 
-      {/* ── ROW 5: Hiring (full detail) + Do-Not + Compliance + NREA ───────── */}
+      {/* ── ROW 5: FX + Cashflow + Pipeline-by-Month + COGS ─────────────────── */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:14, marginBottom:14 }}>
+        <FXExposureCard leads={leads} fosState={fosState} />
+        <CashflowStrip />
+        <PipelineByMonth leads={leads} />
+        <COGSCard />
+      </div>
+
+      {/* ── ROW 6: Hiring (full detail) + Do-Not + Compliance + NREA ───────── */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:14, marginBottom:14 }}>
         <HiringPanel hiring={sys.hiring} />
         <DoNotPanel items={sys.doNotList} />
@@ -854,7 +1277,14 @@ export const ControlCenter = () => {
         <NREACapacityCard leads={leads} />
       </div>
 
-      {/* ── ROW 6: Workload ───────────────────────────────────────────────────── */}
+      {/* ── ROW 7: Project Ops + Quality + NPS ───────────────────────────────── */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap:14, marginBottom:14 }}>
+        <ProjectOpsCard />
+        <QualityMetricsCard />
+        <NPSCard />
+      </div>
+
+      {/* ── ROW 8: Workload ───────────────────────────────────────────────────── */}
       <div style={{ marginBottom:14 }}>
         <ResourceBar workload={sys.workload} resource={sys.resource} />
       </div>
