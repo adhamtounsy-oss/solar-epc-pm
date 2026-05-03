@@ -87,7 +87,7 @@ export const computeCRMSummary = (leads) => {
   const contractsSigned = leads.filter(l => l.stage === 'won').length;
 
   const overdue = leads.filter(l =>
-    isOverdue(l.nextFollowUp) && !['won','lost'].includes(l.stage)
+    isOverdue(l.nextFollowUp) && !['won','lost','unqualified','nurture'].includes(l.stage)
   );
 
   const hot = leads.filter(l => l.temperature === 'Hot' && !['won','lost'].includes(l.stage));

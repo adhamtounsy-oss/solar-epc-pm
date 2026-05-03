@@ -1080,7 +1080,7 @@ const CRMDashboard = ({ leads, tenders, pmAlerts, onClearAlert }) => {
   const proposals = leads.filter(l => l.stage === 'proposal_sent' || l.stage === 'negotiation');
   const won    = leads.filter(l => l.stage === 'won');
   const lost   = leads.filter(l => l.stage === 'lost');
-  const overdue = leads.filter(l => isOverdue(l.nextFollowUp) && l.stage !== 'won' && l.stage !== 'lost');
+  const overdue = leads.filter(l => isOverdue(l.nextFollowUp) && !['won','lost','unqualified','nurture'].includes(l.stage));
   const govLeads = leads.filter(l => l.segment === 'Government Tender');
 
   const weightedPipeline = active.reduce((sum,l) => sum + (parseFloat(l.dealValue)||0) * stageProb(l.stage) / 100, 0);
@@ -1581,7 +1581,7 @@ const VelocityTab = ({ leads }) => {
   const active = leads.filter(l => !['won', 'lost', 'nurture'].includes(l.stage));
   const hot    = leads.filter(l => l.temperature === 'Hot' && !['won','lost'].includes(l.stage));
   const negot  = leads.filter(l => l.stage === 'negotiation');
-  const overdue = leads.filter(l => isOverdue(l.nextFollowUp) && !['won','lost'].includes(l.stage));
+  const overdue = leads.filter(l => isOverdue(l.nextFollowUp) && !['won','lost','unqualified','nurture'].includes(l.stage));
 
   const winRate = (won.length + lost.length) > 0
     ? Math.round(won.length / (won.length + lost.length) * 100) : null;
@@ -2062,9 +2062,11 @@ export const CRMView = () => {
   const handleStageChange = (leadId, newStage, leadName) => {
     const oldLead = leads.find(l => l.id === leadId);
     const stageChanged = !oldLead || oldLead.stage !== newStage;
+    const clearFollowUp = ['unqualified','nurture'].includes(newStage);
     const next = leads.map(l => l.id===leadId ? {
       ...l, stage:newStage, probability:String(stageProb(newStage)),
       ...(stageChanged ? { stageEnteredDate: todayStr() } : {}),
+      ...(clearFollowUp ? { nextFollowUp: '' } : {}),
     } : l);
     syncLeads(next);
     if (PM_TRIGGERS[newStage]) {
