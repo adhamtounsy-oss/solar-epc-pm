@@ -462,12 +462,27 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     }
 
     if (item.id === 'C-NREA' && item.status !== 'done') {
-      add(task(
-        'comp-nrea', 'Submit NREA Bronze qualification dossier',
-        'Required for all DISCO connections. No certificate = no revenue.\nFee: EGP 5,000 (Bronze) + EGP 5,000 review.\nDocuments: commercial register, capital proof, engineer CV (Syndicate), equipment specs.\nSubmit paper + electronic to NREA Technical Affairs.',
-        'COMPLIANCE', item.status === 'critical' ? 'critical' : 'high', 'this-week', 7, 'compliance', 'C-NREA',
-        { fosStateUpdate: { nreaSubmitted: true } }
-      ));
+      // NREA requires capital proof (bank account) and a Syndicate-registered engineer.
+      // Gate on both prerequisites to avoid a wasted submission attempt.
+      const bankDone = compItems.some(i => i.id === 'C-BANK' && i.status === 'done');
+      const engDone  = compItems.some(i => i.id === 'C-ENG'  && i.status === 'done');
+      if (bankDone && engDone) {
+        add(task(
+          'comp-nrea', 'Submit NREA Bronze qualification dossier',
+          'Required for all DISCO connections. No certificate = no revenue.\nFee: EGP 5,000 (Bronze) + EGP 5,000 review.\nDocuments: commercial register, capital proof, engineer CV (Syndicate), equipment specs.\nSubmit paper + electronic to NREA Technical Affairs.\n\n── Setup Chain ──────────────────────────────\n✓ Bank account open\n✓ Engineer hired (Syndicate-registered)\n→ Submit NREA dossier\n  Await NREA certificate (~30 days)',
+          'COMPLIANCE', item.status === 'critical' ? 'critical' : 'high', 'this-week', 7, 'compliance', 'C-NREA',
+          { fosStateUpdate: { nreaSubmitted: true } }
+        ));
+      } else {
+        // Surface a blocked notice so the gap is visible, but don't push a premature NREA task
+        add(task(
+          'comp-nrea-blocked',
+          `NREA submission blocked — ${!bankDone ? 'open bank account first' : 'hire engineer first'}`,
+          `Cannot submit NREA dossier until prerequisites are complete.\n\n── Setup Chain ──────────────────────────────\n${bankDone ? '✓' : '→'} Open corporate bank account (capital proof required)\n${engDone  ? '✓' : '→'} Hire Syndicate-registered engineer (CV required)\n  Submit NREA Bronze dossier\n  Await NREA certificate (~30 days)\n\nComplete the blocking step above first.`,
+          'COMPLIANCE', 'high', 'this-week', 0, 'compliance', 'C-NREA',
+          {}
+        ));
+      }
     }
 
     if (item.id === 'C-FX' && item.status !== 'done') {
@@ -574,12 +589,13 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         ));
       }
 
-      // DISCO application — once project moves to in_progress
-      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('disco_application')) {
+      // DISCO application receipt — only after the application has actually been submitted.
+      // discoSubmittedDate is set when exec-disco is actioned and logged in the project.
+      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('disco_application') && proj.discoSubmittedDate) {
         add(task(
           `doc-disco-app-${proj.id}`,
-          `File DISCO application — ${client}`,
-          `Project is in progress but DISCO application receipt not filed.\nProject: ${proj.name}\nAction: Scan DISCO submission receipt → upload to Documents tab.\nRequired for: net metering approval, grid connection sign-off.`,
+          `File DISCO application receipt — ${client}`,
+          `DISCO application submitted ${proj.discoSubmittedDate}. File the submission receipt now.\nProject: ${proj.name}\nAction: Scan DISCO submission receipt → upload to Projects → Documents tab.\nRequired for: net metering approval, grid connection sign-off.`,
           'COMPLIANCE', 'critical', 'this-week', 1, 'crm', proj.id, {}
         ));
       }
@@ -595,12 +611,14 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
         ));
       }
 
-      // Net metering approval — once in_progress, fires as backlog reminder
-      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('net_metering_approval')) {
+      // Net metering approval chase — only after DISCO application is submitted.
+      // Chasing approval for a submission that hasn't happened is noise.
+      if (['in_progress', 'commissioning'].includes(proj.status) && docPending('net_metering_approval') && proj.discoSubmittedDate) {
+        const daysSinceSubmit = Math.floor((Date.now() - new Date(proj.discoSubmittedDate)) / 86400000);
         add(task(
           `doc-net-metering-${proj.id}`,
           `File net metering approval — ${client}`,
-          `Net metering approval letter not yet filed.\nProject: ${proj.name}\nAction: Chase DISCO → once received, upload to Documents tab.\nRequired before commissioning sign-off.`,
+          `DISCO submitted ${proj.discoSubmittedDate} (${daysSinceSubmit} days ago). Approval letter not yet filed.\nProject: ${proj.name}\nAction: Chase DISCO office for approval status → once received, upload to Projects → Documents tab.\nRequired before commissioning sign-off.`,
           'COMPLIANCE', 'high', 'backlog', 30, 'crm', proj.id, {}
         ));
       }
@@ -615,11 +633,22 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
             'TECHNICAL', 'critical', 'this-week', 3, 'crm', proj.id, {}
           ));
         }
-        if (docPending('handover_certificate')) {
+        // Handover certificate requires the commissioning test report to exist first —
+        // the client signs the certificate after reviewing the test results.
+        const commReportFiled = !docPending('commissioning_report');
+        if (docPending('handover_certificate') && commReportFiled) {
           add(task(
             `doc-handover-${proj.id}`,
             `File client handover certificate — ${client}`,
-            `Commissioning stage but signed handover certificate not filed.\nProject: ${proj.name}\nAction: Client signs certificate → scan → upload to Documents tab.\nTriggers: warranty period start, final payment milestone.`,
+            `Commissioning report filed. Get client signature on handover certificate now.\nProject: ${proj.name}\nAction: Present commissioning report → client signs certificate → scan → upload to Documents tab.\nTriggers: warranty period start, final payment milestone.\n\n── Commissioning Chain ──────────────────────\n✓ Compile commissioning test report\n→ Get client to sign handover certificate\n  Invoice final milestone (${proj.milestones?.slice(-1)[0]?.pct || 10}%)`,
+            'EXECUTION', 'critical', 'this-week', 2, 'crm', proj.id, {}
+          ));
+        } else if (docPending('handover_certificate') && !commReportFiled) {
+          // Report not yet filed — handover is blocked, surface it clearly
+          add(task(
+            `doc-handover-${proj.id}`,
+            `File client handover certificate — ${client}`,
+            `Handover certificate cannot be issued until the commissioning test report is filed.\nProject: ${proj.name}\n\n── Commissioning Chain ──────────────────────\n→ Compile & file commissioning test report first\n  Then: get client signature on handover certificate\n  Then: invoice final milestone`,
             'EXECUTION', 'critical', 'this-week', 2, 'crm', proj.id, {}
           ));
         }
