@@ -5,7 +5,7 @@ import {
   deduplicateBoardCards, migrateBoardLists, backfillAssigneeLabels,
   loadTaskQueue, saveTaskQueue, markTaskPushed, markTaskCompleted,
   taskToClipboard, TASK_TYPES, LIST_TARGETS, ROLE_LABELS, getTaskAssignees,
-  trelloUpdateCardName,
+  trelloUpdateCardName, trelloArchiveCard,
 } from '../engine/trelloEngine';
 
 // ── Storage ────────────────────────────────────────────────────────────────────
@@ -428,32 +428,38 @@ export const TrelloPanel = ({ engineState, leads, onCRMUpdate }) => {
   }, [trelloReady, handleSync]);
 
   // Prune stale pushed tasks whose generating condition is no longer met.
-  // For tasks belonging to a lead that just moved to 'lost', prefix the Trello
-  // card name with [VOID — Lead Lost] so board users know not to action them.
+  // Archives the Trello card so the board stays clean. Lost-lead cards get
+  // a [VOID] prefix first so the archive reason is visible in Trello history.
   useEffect(() => {
     if (!engineState) return;
     const allValidIds = new Set(generateTasks(engineState, leads, []).map(t => t.id));
 
-    if (trelloReady) {
-      taskQueue.forEach(t => {
-        if (!t.pushed || t.completed || t.source === 'adhoc') return;
-        if (allValidIds.has(t.id)) return;
+    const stale = taskQueue.filter(t => {
+      if (!t.pushed || t.completed || t.source === 'adhoc') return false;
+      return !allValidIds.has(t.id);
+    });
+
+    if (trelloReady && stale.length > 0) {
+      stale.forEach(t => {
         if (!t.trelloCardId) return;
-        if (t.title.startsWith('[VOID')) return; // already voided
         const lead = leads.find(l => l.id === t.sourceRef);
-        if (lead?.stage === 'lost') {
+        if (lead?.stage === 'lost' && !t.title.startsWith('[VOID')) {
+          // Rename then archive so history shows why
           trelloUpdateCardName(config, t.trelloCardId, `[VOID — Lead Lost] ${t.title}`)
+            .then(() => trelloArchiveCard(config, t.trelloCardId))
             .catch(() => {});
+        } else {
+          trelloArchiveCard(config, t.trelloCardId).catch(() => {});
         }
       });
     }
 
-    const pruned = taskQueue.filter(t => {
-      if (!t.pushed || t.completed) return true;
-      if (t.source === 'adhoc') return true;
-      return allValidIds.has(t.id);
-    });
-    if (pruned.length !== taskQueue.length) {
+    if (stale.length > 0) {
+      const pruned = taskQueue.filter(t => {
+        if (!t.pushed || t.completed) return true;
+        if (t.source === 'adhoc') return true;
+        return allValidIds.has(t.id);
+      });
       setTaskQueue(pruned);
       saveTaskQueue(pruned);
     }

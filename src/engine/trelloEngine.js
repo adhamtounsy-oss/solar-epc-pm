@@ -111,6 +111,64 @@ const NEXT_STAGE = {
   negotiation:           'won',
 };
 
+// ── CRM sales chain definition ────────────────────────────────────────────────
+// Single source of truth for stage ordering, step labels, and chain context
+// blocks embedded in every task description.
+
+const CRM_CHAIN = [
+  { stage: 'site_visit_scheduled',  label: 'Site visit' },
+  { stage: 'site_visit_completed',  label: 'Propose feasibility study' },
+  { stage: 'feasibility_sold',      label: 'Deliver feasibility study' },
+  { stage: 'feasibility_delivered', label: 'Send EPC proposal' },
+  { stage: 'proposal_sent',         label: 'Follow up on proposal' },
+  { stage: 'negotiation',           label: 'Close contract' },
+];
+
+// Returns { step: '[N/6] ', ctx: '\n\n── Sales Chain...' }
+const crmChain = (currentStage) => {
+  const idx   = CRM_CHAIN.findIndex(s => s.stage === currentStage);
+  if (idx < 0) return { step: '', ctx: '' };
+  const total = CRM_CHAIN.length;
+  const lines = CRM_CHAIN.map((s, i) => {
+    const marker = i < idx ? '✓' : i === idx ? '→' : ' ';
+    return `${marker} ${i + 1}/${total}  ${s.label}`;
+  }).join('\n');
+  return {
+    step: `[${idx + 1}/${total}] `,
+    ctx:  `\n\n── Sales Chain ─────────────────────────────\n${lines}\n         → Execution tracks unlock on contract close`,
+  };
+};
+
+// Pre-built execution chain context blocks for won-stage tasks.
+const WON_CHAIN_DEPOSIT =
+  `\n\n── Execution Chain ─────────────────────────\n` +
+  `Track A — Sequential (deposit-gated)\n` +
+  `→ A1  Collect 30% deposit\n` +
+  `  A2  Submit DISCO application      ⟵ unlocks after deposit received\n` +
+  `  A2  Place equipment order         ⟵ unlocks after deposit received\n\n` +
+  `Track B — Parallel (start now)\n` +
+  `→ B1  Brief engineer & confirm mobilization\n\n` +
+  `⚡ Mark deposit milestone Received in Projects tab\n` +
+  `   → DISCO + Equipment Order tasks appear in Trello automatically`;
+
+const WON_CHAIN_ENG =
+  `\n\n── Execution Chain ─────────────────────────\n` +
+  `Track A — Sequential (deposit-gated)\n` +
+  `  A1  Collect 30% deposit           ← in progress\n` +
+  `  A2  Submit DISCO application      ⟵ unlocks after deposit received\n` +
+  `  A2  Place equipment order         ⟵ unlocks after deposit received\n\n` +
+  `Track B — Parallel\n` +
+  `→ B1  Brief engineer & confirm mobilization`;
+
+const WON_CHAIN_POST_DEPOSIT =
+  `\n\n── Execution Chain ─────────────────────────\n` +
+  `Track A — Sequential\n` +
+  `✓ A1  Collect 30% deposit\n` +
+  `→ A2  Submit DISCO application\n` +
+  `→ A2  Place equipment order\n\n` +
+  `Track B — Parallel\n` +
+  `  B1  Brief engineer & confirm mobilization`;
+
 // ── TASK GENERATION ────────────────────────────────────────────────────────────
 // Takes fosEngine output + raw leads → returns array of pending tasks
 // Only generates tasks that don't already exist in the pushed queue
@@ -120,6 +178,9 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
   const pushed = new Set(pushedTasks.map(t => t.id));
 
   const add = (t) => { if (!pushed.has(t.id)) tasks.push(t); };
+
+  // Load projects once — used for won-stage deposit gating and project governance
+  const allProjs = (() => { try { return JSON.parse(localStorage.getItem('projects_v1') || '[]'); } catch { return []; } })();
 
   const { day, crm, compliance, hiring, primaryDecision, mode } = engineState;
 
@@ -167,10 +228,11 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const phaseConf = sQual.gridPhase       ? `\nGrid phase: ${sQual.gridPhase}` : '';
       const dmLine    = sCont.decisionMakerName ? `\nDecision maker: ${sCont.decisionMakerName}${sCont.decisionMakerRole?' ('+sCont.decisionMakerRole+')':''}` : '';
       const diesel    = sQual.existingDiesel  ? `\n⚠ Diesel generator on-site — assess hybrid/battery potential` : '';
+      const { step: s1, ctx: c1 } = crmChain('site_visit_scheduled');
       add(task(
         `crm-visit-${lead.id}`,
-        `Site visit — ${name}`,
-        `Conduct qualifying site visit.${timeSlot}${address}${onSiteCt}${access}${contactLine}${billLine}${phaseConf}${dmLine}${diesel}\nSystem: ${lead.systemSizeKW||'?'}kW${value}.\nBring: smartphone meter app, tape measure, ≥10 photos, load data request, site checklist.\nGoal: roof area + shading + DISCO + electrical panel rating + confirm decision maker present.`,
+        `${s1}Site visit — ${name}`,
+        `Conduct qualifying site visit.${timeSlot}${address}${onSiteCt}${access}${contactLine}${billLine}${phaseConf}${dmLine}${diesel}\nSystem: ${lead.systemSizeKW||'?'}kW${value}.\nBring: smartphone meter app, tape measure, ≥10 photos, load data request, site checklist.\nGoal: roof area + shading + DISCO + electrical panel rating + confirm decision maker present.${c1}`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'site_visit_completed' }
       ));
@@ -182,10 +244,11 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const payback   = sSv.roughPaybackYears     ? `\nRough payback: ~${sSv.roughPaybackYears} yr` : '';
       const shading   = sSv.shadingRisk && sSv.shadingRisk !== 'None' ? `\n⚠ Shading: ${sSv.shadingRisk}${sSv.shadingNotes?' — '+sSv.shadingNotes:''}` : '';
       const netMeter  = sSv.netMeteringEligible   ? `\n✓ Net metering eligible (${sSv.disco||'DISCO TBC'})` : (sSv.disco ? `\nDISCO: ${sSv.disco}` : '');
+      const { step: s2, ctx: c2 } = crmChain('site_visit_completed');
       add(task(
         `crm-propose-fs-${lead.id}`,
-        `Propose paid feasibility study — ${name}`,
-        `Site visit done. Follow up within 48h.${contactLine}${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.`,
+        `${s2}Propose paid feasibility study — ${name}`,
+        `Site visit done. Follow up within 48h.${contactLine}${recSize}${annSav}${payback}${shading}${netMeter}\nFee: EGP 3,000–5,000 (credit against EPC contract). Issue invoice on confirmation.\nCollect deposit before analysis starts.${c2}`,
         'SALES', 'high', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_proposed' }
       ));
@@ -195,17 +258,17 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const deposit   = sFs.depositCollectedEGP  ? `\nDeposit: EGP ${Number(sFs.depositCollectedEGP).toLocaleString()} (${sFs.paymentMethod||'method TBC'})` : '';
       const deadline  = sFs.deliveryPromisedBy   ? `\nDeadline: ${sFs.deliveryPromisedBy} — HARD` : '';
       const assignee  = sFs.assignedTo           ? `\nAssigned to: ${sFs.assignedTo}` : '';
-      // PVsyst simulation inputs — pulled directly from site visit dossier
       const pvSize    = sSv.recommendedSizeKwp   ? `\n• Size: ${sSv.recommendedSizeKwp} kWp` : (lead.systemSizeKW ? `\n• Size: ${lead.systemSizeKW} kWp` : '');
       const pvRoof    = sSv.roofType             ? `\n• Roof: ${sSv.roofType}, ${sSv.usableAreaM2||'?'}m², Az ${sSv.azimuthDeg||'?'}°, Tilt ${sSv.tiltDeg||'?'}°` : '';
       const pvShading = sSv.shadingRisk          ? `\n• Shading: ${sSv.shadingRisk}` : '';
       const pvConsump = sSv.avgMonthlyKwh        ? `\n• Consumption: ${sSv.avgMonthlyKwh} kWh/mo · Peak: ${sSv.peakDemandKva||'?'} kVA · ${sSv.operatingProfile||''}` : '';
       const pvDisco   = sSv.disco                ? `\n• DISCO: ${sSv.disco} · ${sSv.gridPhaseConfirmed||''} · ${sSv.feederVoltage||''}` : '';
       const pvTariff  = sQual.tariffCategory     ? `\n• Tariff: ${sQual.tariffCategory}` : '';
+      const { step: s3, ctx: c3 } = crmChain('feasibility_sold');
       add(task(
         `crm-deliver-fs-${lead.id}`,
-        `Deliver feasibility study — ${name}`,
-        `Feasibility deposit received. Deliver within 14 days.${contactLine}${deposit}${deadline}${assignee}\n\nPVsyst inputs:${pvSize}${pvRoof}${pvShading}${pvConsump}${pvDisco}${pvTariff}\n\nDeliverable: PVsyst report, yield, payback, IRR, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in the same meeting.`,
+        `${s3}Deliver feasibility study — ${name}`,
+        `Feasibility deposit received. Deliver within 14 days.${contactLine}${deposit}${deadline}${assignee}\n\nPVsyst inputs:${pvSize}${pvRoof}${pvShading}${pvConsump}${pvDisco}${pvTariff}\n\nDeliverable: PVsyst report, yield, payback, IRR, FX clause notice.\nDeliver IN PERSON — not by email. Push EPC proposal in the same meeting.${c3}`,
         'TECHNICAL', 'critical', 'in-progress', 14, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'feasibility_delivered' }
       ));
@@ -219,10 +282,11 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const clientFb  = sFd.clientFeedback        ? `\nClient reaction: "${sFd.clientFeedback.slice(0,100)}"` : '';
       const nmLine    = sSv.netMeteringEligible   ? `\n✓ Net metering eligible — include in ROI` : '';
       const fxLine    = sPs.fxClause === true ? `\n✓ FX clause already in proposal` : `\n⚠ Ensure FX escalation clause is in the proposal`;
+      const { step: s4, ctx: c4 } = crmChain('feasibility_delivered');
       add(task(
         `crm-proposal-${lead.id}`,
-        `Send EPC proposal — ${name}`,
-        `Feasibility delivered. Send EPC proposal within 48h.${contactLine}${finalSize}${pbLine}${npvLine}${equip}${clientFb}${nmLine}${fxLine}\nMust include: FX escalation clause · 30% deposit requirement · IEC-certified BOM · Performance guarantee.`,
+        `${s4}Send EPC proposal — ${name}`,
+        `Feasibility delivered. Send EPC proposal within 48h.${contactLine}${finalSize}${pbLine}${npvLine}${equip}${clientFb}${nmLine}${fxLine}\nMust include: FX escalation clause · 30% deposit requirement · IEC-certified BOM · Performance guarantee.${c4}`,
         'SALES', 'critical', 'this-week', 2, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'proposal_sent' }
       ));
@@ -235,10 +299,11 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const termsLine = sPs.paymentTerms         ? `\nPayment terms: ${sPs.paymentTerms}` : '';
       const objLine   = sQual.objections         ? `\nKnown objections: ${sQual.objections.slice(0,100)}` : '';
       const fbLine    = sFd.clientFeedback        ? `\nFeasibility reaction: "${sFd.clientFeedback.slice(0,80)}"` : '';
+      const { step: s5, ctx: c5 } = crmChain('proposal_sent');
       add(task(
         `crm-followup-prop-${lead.id}`,
-        `Follow up on EPC proposal — ${name}`,
-        `Proposal sent. Follow up 2×/week.${contactLine}${ctVal}${validLine}${fxLine}${termsLine}${objLine}${fbLine}\nStrategy: in-person meeting with irradiance model. If no response in 10 days: invoke 48h FX validity notice.`,
+        `${s5}Follow up on EPC proposal — ${name}`,
+        `Proposal sent. Follow up 2×/week.${contactLine}${ctVal}${validLine}${fxLine}${termsLine}${objLine}${fbLine}\nStrategy: in-person meeting with irradiance model. If no response in 10 days: invoke 48h FX validity notice.${c5}`,
         'SALES', 'high', 'this-week', 5, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'negotiation' }
       ));
@@ -251,10 +316,11 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
       const marginLine= sNeg.marginImpactEGP     ? `\n⚠ Margin reduced EGP ${Number(sNeg.marginImpactEGP).toLocaleString()} already` : '';
       const revLine   = sNeg.revisedProposalSent ? `\n✓ Revised proposal already sent` : '';
       const fxLine    = sPs.fxClause === true ? `\n✓ FX clause confirmed` : `\n⚠ No FX clause — non-negotiable: must be in final contract`;
+      const { step: s6, ctx: c6 } = crmChain('negotiation');
       add(task(
         `crm-close-${lead.id}`,
-        `Close contract — ${name}${value}`,
-        `Active negotiation. Book in-person meeting this week.${contactLine}${ctVal}${stickLine}${concLine}${marginLine}${revLine}${fxLine}\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nBring: signed contract template, deposit invoice, FX clause explainer.\nWalk away if deposit refused.`,
+        `${s6}Close contract — ${name}${value}`,
+        `Active negotiation. Book in-person meeting this week.${contactLine}${ctVal}${stickLine}${concLine}${marginLine}${revLine}${fxLine}\nFloor: 30% deposit (25% absolute minimum for deals >EGP 1.5M).\nBring: signed contract template, deposit invoice, FX clause explainer.\nWalk away if deposit refused.${c6}`,
         'SALES', 'critical', 'this-week', 3, 'crm', lead.id,
         { crmLeadId: lead.id, crmNextStage: 'won' }
       ));
@@ -278,64 +344,77 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
     }
 
     if (lead.stage === 'won') {
-      const contractRef = sWon.contractRef       ? ` (${sWon.contractRef})` : '';
-      const kickoff     = sWon.kickoffDate       ? `\nKickoff date: ${sWon.kickoffDate}` : '';
-      const ctVal       = sPs.contractValueEGP   ? `\nContract value: EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : (value ? `\nEst. value:${value}` : '');
+      const contractRef = sWon.contractRef     ? ` (${sWon.contractRef})` : '';
+      const kickoff     = sWon.kickoffDate     ? `\nKickoff date: ${sWon.kickoffDate}` : '';
+      const ctVal       = sPs.contractValueEGP ? `\nContract value: EGP ${Number(sPs.contractValueEGP).toLocaleString()}` : (value ? `\nEst. value:${value}` : '');
 
+      // Check if deposit milestone is received in the linked project.
+      // DISCO and procurement are gated on this — they must not exist on the
+      // board before cleared funds are confirmed, as ordering without deposit
+      // is a cash-flow and counterparty risk.
+      const linkedProj      = allProjs.find(p => p.linkedLeadId === lead.id);
+      const depositReceived = !!(linkedProj?.milestones?.some(
+        m => m.label.toLowerCase().includes('deposit') && m.status === 'received'
+      ));
+
+      // Track A step 1 — always fires immediately on contract win
       add(task(
         `exec-deposit-${lead.id}`,
-        `Collect 30% deposit — ${name}`,
-        `Contract signed${contractRef}. Confirm deposit cleared before ANY equipment order.${contactLine}${ctVal}${kickoff}\nIssue deposit invoice immediately. No procurement without cleared funds.`,
+        `[Exec A1] Collect 30% deposit — ${name}`,
+        `Contract signed${contractRef}. Confirm deposit cleared before ANY equipment order or DISCO submission.${contactLine}${ctVal}${kickoff}\nIssue deposit invoice immediately. No procurement without cleared funds.${WON_CHAIN_DEPOSIT}`,
         'EXECUTION', 'critical', 'in-progress', 2, 'crm', lead.id,
         { fosStateUpdate: { depositCollected: true } }
       ));
 
-      // DISCO task — named after the specific distribution company from the site visit
-      const discoName  = sSv.disco || 'DISCO';
-      const nmStatus   = sSv.netMeteringEligible === true
-        ? `\n✓ Net metering eligibility confirmed at site visit`
-        : `\n⚠ Net metering eligibility not confirmed — verify with ${discoName} before submitting`;
-      const sysSpec    = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
-      const sysLine    = sysSpec ? `\nSystem: ${sysSpec} kWp — prepare spec sheet` : '';
-      const addrLine   = sSvSch.siteAddress ? `\nSite: ${sSvSch.siteAddress}` : '';
-      const panelSpec  = sFd.panelBrandModel ? `\nPanel for spec sheet: ${sFd.panelBrandModel}` : '';
-      const feederLine = sSv.feederVoltage   ? `\nFeeder: ${sSv.feederVoltage} · ${sSv.gridPhaseConfirmed||'phase TBC'}` : '';
-      add(task(
-        `exec-disco-${lead.id}`,
-        `Submit ${discoName} net-metering application — ${name}`,
-        `Submit ${discoName} application same day deposit clears.${nmStatus}${sysLine}${addrLine}${panelSpec}${feederLine}\nDocuments: system spec sheet, site plan, NREA certificate copy, commercial register.\nGet reference number — log in CRM notes.`,
-        'COMPLIANCE', 'critical', 'this-week', 1, 'crm', lead.id,
-        { fosStateUpdate: { discoSubmitted: true } }
-      ));
-
-      // Procurement task — pre-filled with equipment from feasibility study
-      const panelLine  = sFd.panelBrandModel     ? `\nPanels: ${sFd.panelBrandModel}` : '';
-      const invLine    = sFd.inverterBrandModel  ? `\nInverter: ${sFd.inverterBrandModel}` : '';
-      const pcLine     = sSv.estimatedPanelCount ? `\nPanel count: ~${sSv.estimatedPanelCount} × 400W` : '';
-      const sizeProc   = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
-      const sizeLine   = sizeProc ? `\nSystem: ${sizeProc} kWp` : '';
-      add(task(
-        `exec-procure-${lead.id}`,
-        `Place equipment order — ${name}`,
-        `Only after deposit cleared.${sizeLine}${panelLine}${invLine}${pcLine}\nLead times: panels 3–4 weeks, inverters 2–3 weeks, BOS 1–2 weeks.\nLock panel price within 72h of contract signature. Collect IEC certificates with every order.`,
-        'EXECUTION', 'critical', 'backlog', 3, 'crm', lead.id,
-        {}
-      ));
-
-      // Engineer mobilization brief — new task; lands the engineerBrief dossier field
-      const engBrief   = sWon.engineerBrief      ? `\nEngineer brief: ${sWon.engineerBrief}` : '';
-      const roofLine   = sSv.roofType            ? `\nRoof: ${sSv.roofType}, ${sSv.usableAreaM2||'?'}m², Az ${sSv.azimuthDeg||'?'}°, Tilt ${sSv.tiltDeg||'?'}°` : '';
+      // Track B — parallel, no deposit dependency
+      const engBrief   = sWon.engineerBrief        ? `\nEngineer brief: ${sWon.engineerBrief}` : '';
+      const roofLine   = sSv.roofType              ? `\nRoof: ${sSv.roofType}, ${sSv.usableAreaM2||'?'}m², Az ${sSv.azimuthDeg||'?'}°, Tilt ${sSv.tiltDeg||'?'}°` : '';
       const shadingMob = sSv.shadingRisk && sSv.shadingRisk !== 'None' ? `\n⚠ Shading: ${sSv.shadingRisk}${sSv.shadingNotes?' — '+sSv.shadingNotes:''}` : '';
-      const brkrLine   = sSv.mainBreakerAmps     ? `\nMain breaker: ${sSv.mainBreakerAmps}A · DB: ${sSv.dbPanelBrand||'TBC'}` : '';
-      const gridLine   = sSv.gridPhaseConfirmed  ? `\nGrid: ${sSv.gridPhaseConfirmed} · ${sSv.feederVoltage||'voltage TBC'}` : '';
+      const brkrLine   = sSv.mainBreakerAmps       ? `\nMain breaker: ${sSv.mainBreakerAmps}A · DB: ${sSv.dbPanelBrand||'TBC'}` : '';
+      const gridLine   = sSv.gridPhaseConfirmed    ? `\nGrid: ${sSv.gridPhaseConfirmed} · ${sSv.feederVoltage||'voltage TBC'}` : '';
       const facilsLine = sSv.facilitiesContactName ? `\nOn-site contact: ${sSv.facilitiesContactName}${sSv.facilitiesContactPhone?' / '+sSv.facilitiesContactPhone:''}` : '';
       add(task(
         `exec-eng-brief-${lead.id}`,
-        `Brief engineer & confirm mobilization — ${name}`,
-        `Contract won. Brief engineer and lock mobilization date.${contactLine}${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.`,
+        `[Exec B1] Brief engineer & confirm mobilization — ${name}`,
+        `Contract won. Brief engineer and lock mobilization date.${contactLine}${kickoff}${engBrief}${roofLine}${shadingMob}${brkrLine}${gridLine}${facilsLine}\nConfirm: PPE on-site, installation permits ready, equipment delivery date aligns with mobilization.${WON_CHAIN_ENG}`,
         'TECHNICAL', 'critical', 'in-progress', 1, 'crm', lead.id,
         {}
       ));
+
+      // Track A step 2 — only after deposit is marked Received in Projects tab.
+      // The 5-second leads poll in ControlCenter re-reads projects_v1, so these
+      // tasks appear in the Trello queue automatically within 5s of the update.
+      if (depositReceived) {
+        const discoName  = sSv.disco || 'DISCO';
+        const nmStatus   = sSv.netMeteringEligible === true
+          ? `\n✓ Net metering eligibility confirmed at site visit`
+          : `\n⚠ Net metering eligibility not confirmed — verify with ${discoName} before submitting`;
+        const sysSpec    = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
+        const sysLine    = sysSpec ? `\nSystem: ${sysSpec} kWp — prepare spec sheet` : '';
+        const addrLine   = sSvSch.siteAddress ? `\nSite: ${sSvSch.siteAddress}` : '';
+        const panelSpec  = sFd.panelBrandModel ? `\nPanel for spec sheet: ${sFd.panelBrandModel}` : '';
+        const feederLine = sSv.feederVoltage   ? `\nFeeder: ${sSv.feederVoltage} · ${sSv.gridPhaseConfirmed||'phase TBC'}` : '';
+        add(task(
+          `exec-disco-${lead.id}`,
+          `[Exec A2] Submit ${discoName} net-metering application — ${name}`,
+          `Deposit confirmed. Submit ${discoName} application now.${nmStatus}${sysLine}${addrLine}${panelSpec}${feederLine}\nDocuments: system spec sheet, site plan, NREA certificate copy, commercial register.\nGet reference number — log in CRM notes.${WON_CHAIN_POST_DEPOSIT}`,
+          'COMPLIANCE', 'critical', 'this-week', 1, 'crm', lead.id,
+          { fosStateUpdate: { discoSubmitted: true } }
+        ));
+
+        const panelLine = sFd.panelBrandModel     ? `\nPanels: ${sFd.panelBrandModel}` : '';
+        const invLine   = sFd.inverterBrandModel  ? `\nInverter: ${sFd.inverterBrandModel}` : '';
+        const pcLine    = sSv.estimatedPanelCount ? `\nPanel count: ~${sSv.estimatedPanelCount} × 400W` : '';
+        const sizeProc  = sFd.finalSizeKwp || sSv.recommendedSizeKwp || lead.systemSizeKW;
+        const sizeLine  = sizeProc ? `\nSystem: ${sizeProc} kWp` : '';
+        add(task(
+          `exec-procure-${lead.id}`,
+          `[Exec A2] Place equipment order — ${name}`,
+          `Deposit confirmed. Place orders now.${sizeLine}${panelLine}${invLine}${pcLine}\nLead times: panels 3–4 weeks, inverters 2–3 weeks, BOS 1–2 weeks.\nLock panel price within 72h of contract signature. Collect IEC certificates with every order.${WON_CHAIN_POST_DEPOSIT}`,
+          'EXECUTION', 'critical', 'this-week', 1, 'crm', lead.id,
+          {}
+        ));
+      }
     }
 
     // Overdue follow-ups regardless of stage
@@ -443,8 +522,6 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
   // ── AR aging: overdue invoice collection ──────────────────────────────────
   // Fires a collection task when a milestone has been in 'invoiced' state for ≥14 days.
   try {
-    const rawProj = localStorage.getItem('projects_v1');
-    const allProjs = rawProj ? JSON.parse(rawProj) : [];
     for (const proj of allProjs) {
       for (const ms of (proj.milestones || [])) {
         if (ms.status !== 'invoiced' || !ms.invoicedDate) continue;
@@ -465,9 +542,6 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
   // ── Document gap tasks ─────────────────────────────────────────────────────
   // Fires a Trello card for each missing critical document at the right stage.
   try {
-    const rawProj = localStorage.getItem('projects_v1');
-    const allProjs = rawProj ? JSON.parse(rawProj) : [];
-
     for (const proj of allProjs) {
       if (proj.status === 'complete') continue;
       const docs       = proj.documents || [];
@@ -605,8 +679,7 @@ export const generateTasks = (engineState, leads, pushedTasks = []) => {
 
   // ── 5. Project governance alerts ──────────────────────────────────────────
   try {
-    const allProjs = JSON.parse(localStorage.getItem('projects_v1')||'[]');
-    const EG_PSH   = [4.1,4.8,5.7,6.6,7.0,7.3,7.1,6.9,6.5,5.6,4.5,3.9];
+    const EG_PSH = [4.1,4.8,5.7,6.6,7.0,7.3,7.1,6.9,6.5,5.6,4.5,3.9];
 
     for (const proj of allProjs) {
       if (['on_hold'].includes(proj.status)) continue;
@@ -747,7 +820,7 @@ export const trelloGetBoardLabels = (config) =>
 export const trelloGetBoardCards = (config) =>
   trelloReq('GET', `/boards/${config.boardId}/cards?filter=all&fields=id,name,desc,idList,labels,dueComplete,closed`, null, config);
 
-const trelloArchiveCard      = (config, cardId)            => trelloReq('PUT',  `/cards/${cardId}`,              { closed: true }, config);
+export const trelloArchiveCard = (config, cardId)            => trelloReq('PUT',  `/cards/${cardId}`,              { closed: true }, config);
 export const trelloUpdateCardName = (config, cardId, name) => trelloReq('PUT',  `/cards/${cardId}`,              { name }, config);
 const trelloAddCardLabel   = (config, cardId, labelId)   => trelloReq('POST', `/cards/${cardId}/idLabels`,     { value: labelId }, config);
 const trelloRemoveCardLabel= (config, cardId, labelId)   => trelloReq('DELETE',`/cards/${cardId}/idLabels/${labelId}`, null, config);
@@ -949,7 +1022,17 @@ export const pushTask = async (config, task, listMapping, labelMaps, boardCards 
 
   const cards = boardCards ?? await trelloGetBoardCards(config);
   const existing = cards.find(c => extractFosId(c.desc) === task.id);
-  if (existing) return existing.id;
+
+  const primary   = ROLE_LABELS[task.assignees?.primary]?.label   ?? task.assignees?.primary   ?? '—';
+  const secondary = ROLE_LABELS[task.assignees?.secondary]?.label ?? task.assignees?.secondary ?? null;
+  const assigneeLine = `\n\n👤 Primary: ${primary}${secondary ? ` · 👥 CC: ${secondary}` : ''}`;
+  const freshDesc = task.description + assigneeLine + FOS_MARKER(task.id);
+
+  if (existing) {
+    // Refresh the description with latest dossier data so the card reflects current state
+    await trelloReq('PUT', `/cards/${existing.id}`, { desc: freshDesc }, config).catch(() => {});
+    return existing.id;
+  }
 
   const { typeMap = {}, roleMap = {} } = labelMaps ?? {};
   const labelIds = [
@@ -958,13 +1041,9 @@ export const pushTask = async (config, task, listMapping, labelMaps, boardCards 
     roleMap[task.assignees?.secondary],
   ].filter(Boolean);
 
-  const primary   = ROLE_LABELS[task.assignees?.primary]?.label   ?? task.assignees?.primary   ?? '—';
-  const secondary = ROLE_LABELS[task.assignees?.secondary]?.label ?? task.assignees?.secondary ?? null;
-  const assigneeLine = `\n\n👤 Primary: ${primary}${secondary ? ` · 👥 CC: ${secondary}` : ''}`;
-
   const card = await trelloCreateCard(config, {
     title:       task.title,
-    description: task.description + assigneeLine + FOS_MARKER(task.id),
+    description: freshDesc,
     listId,
     labelIds,
     dueInDays:   task.dueInDays,
@@ -1014,6 +1093,20 @@ export const markTaskPushed = (queue, taskId, cardId) =>
 
 export const markTaskCompleted = (queue, cardId) =>
   queue.map(t => t.trelloCardId === cardId ? { ...t, completed: true } : t);
+
+// ── Project card lookup ────────────────────────────────────────────────────────
+// Returns all open Trello cards whose fos: marker encodes the given projectId.
+export const fetchProjectCards = async (config, projectId) => {
+  const cards = await trelloGetBoardCards(config);
+  return cards.filter(c => {
+    const fosId = extractFosId(c.desc);
+    return fosId && fosId.includes(projectId) && !c.closed;
+  });
+};
+
+export const archiveCards = async (config, cardIds) => {
+  for (const id of cardIds) await trelloArchiveCard(config, id);
+};
 
 // ── Clipboard fallback (when Trello not configured) ────────────────────────────
 

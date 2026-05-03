@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { DossierModal } from './CRMView';
 import { DOC_TYPES, DOC_PHASES, DOC_STATUS, scaffoldDocuments } from '../engine/docScaffold';
 import { BOM_TEMPLATES } from '../engine/bomTemplates';
+import { fetchProjectCards, archiveCards } from '../engine/trelloEngine';
 
 const PROJECTS_KEY = 'projects_v1';
 const LEADS_KEY    = 'crm_leads_v3';
@@ -1405,12 +1406,100 @@ function LinkedLeadPanel({ lead }) {
   );
 }
 
+// ── Delete project modal ───────────────────────────────────────────────────────
+
+function DeleteProjectModal({ project, onConfirm, onCancel }) {
+  const [phase,  setPhase]  = useState('loading'); // loading | ready | archiving | error
+  const [cards,  setCards]  = useState([]);
+  const [errMsg, setErrMsg] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const cfg = (() => { try { return JSON.parse(localStorage.getItem('trello_config_v1') || '{}'); } catch { return {}; } })();
+    if (!cfg.apiKey || !cfg.token || !cfg.boardId) { setPhase('ready'); return; }
+    fetchProjectCards(cfg, project.id)
+      .then(c => { if (!cancelled) { setCards(c); setPhase('ready'); } })
+      .catch(() => { if (!cancelled) setPhase('ready'); });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const handleArchiveAndDelete = async () => {
+    if (cards.length === 0) { onConfirm(); return; }
+    setPhase('archiving');
+    const cfg = (() => { try { return JSON.parse(localStorage.getItem('trello_config_v1') || '{}'); } catch { return {}; } })();
+    try {
+      await archiveCards(cfg, cards.map(c => c.id));
+      onConfirm();
+    } catch (e) {
+      setErrMsg('Trello archive failed — ' + (e?.message || 'network error'));
+      setPhase('error');
+    }
+  };
+
+  const overlay = { position:'fixed', inset:0, background:'rgba(0,0,0,.45)', zIndex:9000, display:'flex', alignItems:'center', justifyContent:'center' };
+  const box     = { background:'#fff', borderRadius:8, padding:24, width:420, maxWidth:'90vw', boxShadow:'0 8px 32px rgba(0,0,0,.18)' };
+
+  return (
+    <div style={overlay} onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div style={box}>
+        <div style={{ fontWeight:700, fontSize:13, color:'#0F1410', marginBottom:6 }}>Delete "{project.name}"?</div>
+        <div style={{ fontSize:11, color:'#555', marginBottom:14 }}>This cannot be undone.</div>
+
+        {phase === 'loading' && (
+          <div style={{ fontSize:11, color:'#888', marginBottom:16 }}>Checking Trello for linked cards…</div>
+        )}
+
+        {(phase === 'ready' || phase === 'archiving' || phase === 'error') && cards.length > 0 && (
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:'#C0392B', marginBottom:6 }}>
+              {cards.length} linked Trello card{cards.length > 1 ? 's' : ''} found:
+            </div>
+            <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:6, padding:'6px 10px', maxHeight:140, overflowY:'auto' }}>
+              {cards.map(c => (
+                <div key={c.id} style={{ fontSize:10, color:'#333', padding:'3px 0', borderBottom:'1px solid #f0f0f0' }}>
+                  {c.name}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(phase === 'ready' || phase === 'archiving' || phase === 'error') && cards.length === 0 && (
+          <div style={{ fontSize:11, color:'#888', marginBottom:16 }}>No linked Trello cards found.</div>
+        )}
+
+        {phase === 'error' && (
+          <div style={{ fontSize:10, color:'#C0392B', marginBottom:12 }}>{errMsg}</div>
+        )}
+
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+          <button onClick={onCancel} disabled={phase==='archiving'}
+            style={{ padding:'5px 14px', background:'#f5f5f5', border:'1px solid #ddd', borderRadius:4, fontSize:11, cursor:'pointer' }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={phase==='loading' || phase==='archiving'}
+            style={{ padding:'5px 14px', background:'#fff5f5', color:'#C0392B', border:'1px solid #C0392B60', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer' }}>
+            Delete Only
+          </button>
+          {cards.length > 0 && (
+            <button onClick={handleArchiveAndDelete} disabled={phase==='loading' || phase==='archiving'}
+              style={{ padding:'5px 14px', background:'#C0392B', color:'#fff', border:'none', borderRadius:4, fontSize:11, fontWeight:700, cursor:'pointer' }}>
+              {phase==='archiving' ? 'Archiving…' : `Archive ${cards.length} card${cards.length>1?'s':''} & Delete`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Project detail ─────────────────────────────────────────────────────────────
 
 function ProjectDetail({ project, leads, onChange, onDelete }) {
   const linkedLead  = leads.find(l => l.id === project.linkedLeadId);
   const defaultTab  = linkedLead ? 'lead' : 'milestones';
-  const [tab, setTab] = useState(defaultTab);
+  const [tab, setTab]           = useState(defaultTab);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const totalContract = Number(project.contractValue) || 0;
   const totalReceived = project.milestones.filter(m => m.status === 'received').reduce((s, m) => s + (Number(m.amount) || 0), 0);
@@ -1733,11 +1822,19 @@ function ProjectDetail({ project, leads, onChange, onDelete }) {
       {/* Delete */}
       <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0', display: 'flex', justifyContent: 'flex-end' }}>
         <button
-          onClick={() => { if (window.confirm(`Delete "${project.name}"?`)) onDelete(project.id); }}
+          onClick={() => setShowDeleteModal(true)}
           style={{ padding: '4px 12px', background: '#fff5f5', color: '#C0392B', border: '1px solid #C0392B40', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>
           Delete Project
         </button>
       </div>
+
+      {showDeleteModal && (
+        <DeleteProjectModal
+          project={project}
+          onConfirm={() => { setShowDeleteModal(false); onDelete(project.id); }}
+          onCancel={() => setShowDeleteModal(false)}
+        />
+      )}
     </div>
   );
 }
